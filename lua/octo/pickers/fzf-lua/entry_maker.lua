@@ -10,13 +10,19 @@ function M.gen_from_issue(issue_table)
   if not issue_table or vim.tbl_isempty(issue_table) then
     return nil
   end
-  local kind = issue_table.__typename == "Issue" and "issue" or "pull_request"
-  local filename ---@type string
-  if kind == "issue" then
+
+  local kind, filename
+  if issue_table.__typename == "Issue" then
+    kind = "issue"
     filename = utils.get_issue_uri(issue_table.number, issue_table.repository.nameWithOwner)
-  else
+  elseif issue_table.__typename == "PullRequest" then
+    kind = "pull_request"
     filename = utils.get_pull_request_uri(issue_table.number, issue_table.repository.nameWithOwner)
+  elseif issue_table.__typename == "Discussion" then
+    kind = "discussion"
+    filename = utils.get_discussion_uri(issue_table.number, issue_table.repository.nameWithOwner)
   end
+
   return {
     filename = filename,
     kind = kind,
