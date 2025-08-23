@@ -1,7 +1,10 @@
 ---@diagnostic disable
 local entry_maker = require "octo.pickers.fzf-lua.entry_maker"
 local fzf = require "fzf-lua"
+local octo_config = require "octo.config"
 local picker_utils = require "octo.pickers.fzf-lua.pickers.utils"
+
+local cfg = octo_config.values
 
 return function(flattened_actions)
   local titles = {}
@@ -22,6 +25,7 @@ return function(flattened_actions)
     fzf_opts = {
       ["--no-multi"] = "",
     },
+    winopts = vim.tbl_deep_extend("force", {}, cfg.picker_config.fzflua.winopts),
     actions = {
       ["default"] = function(selected)
         local entry = formatted_actions[selected[1]]

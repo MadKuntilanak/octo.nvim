@@ -91,10 +91,10 @@ return function(opts)
       ["--header"] = opts.results_title,
       ["--info"] = "default",
     },
-    winopts = {
-      title = window_title,
+    winopts = vim.tbl_deep_extend("force", {
+      title = opts.window_title or "Issues",
       title_pos = "center",
-    },
-    actions = actions,
+    }, cfg.picker_config.fzflua.winopts),
+    actions = fzf_actions.common_open_actions(formatted_issues),
   })
 end
