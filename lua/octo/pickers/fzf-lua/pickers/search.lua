@@ -3,10 +3,14 @@ local fzf_actions = require "octo.pickers.fzf-lua.pickers.fzf_actions"
 local entry_maker = require "octo.pickers.fzf-lua.entry_maker"
 local fzf = require "fzf-lua"
 local gh = require "octo.gh"
+
 local queries = require "octo.gh.queries"
+local octo_config = require "octo.config"
 local picker_utils = require "octo.pickers.fzf-lua.pickers.utils"
 local utils = require "octo.utils"
 local previewers = require "octo.pickers.fzf-lua.previewers"
+
+local cfg = octo_config.values
 
 ---@param fzf_cb function
 ---@param issue table
@@ -33,6 +37,8 @@ return function(opts)
 
   local formatted_items = {} ---@type table<string, table> entry.ordinal -> entry
 
+  local title_fzf = picker_utils.format_title("Search", opts)
+
   local function contents(query)
     return function(fzf_cb)
       coroutine.wrap(function()
@@ -47,19 +53,26 @@ return function(opts)
         end
 
         for _, val in ipairs(opts.prompt) do
-          local _prompt = query
+          local _prompt = ""
+
+          if query and type(query) == "table" then
+            _prompt = query[1]
+          end
+
           if val then
             _prompt = string.format("%s %s", val, _prompt)
           end
+
           local output = gh.api.graphql {
             query = queries.search,
-            fields = { prompt = _prompt },
+            fields = { prompt = _prompt, type = opts.type },
             jq = ".data.search.nodes",
             opts = { mode = "sync" },
           }
 
           if utils.is_blank(output) then
-            return {}
+            utils.info(string.format("No results found for query: %s", val))
+            return
           end
 
           local issues = vim.json.decode(output)
@@ -97,6 +110,9 @@ return function(opts)
       ["--delimiter"] = " ",
       ["--with-nth"] = "4..",
     },
+    winopts = vim.tbl_deep_extend("force", {
+      title = title_fzf,
+    }, cfg.picker_config.fzflua.winopts),
     actions = fzf_actions.common_open_actions(formatted_items),
   })
 end

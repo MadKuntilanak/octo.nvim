@@ -70,6 +70,44 @@ function M.open(command, entry)
   utils.get(entry.kind, entry.value, entry.repo)
 end
 
+local function save_to_qf(is_loc, items, title, winid)
+  is_loc = is_loc or false
+
+  if not is_loc then
+    vim.fn.setqflist({}, " ", { items = items, title = title })
+    return
+  end
+
+  winid = winid or vim.api.nvim_get_current_win()
+  vim.fn.setloclist(winid, {}, " ", { items = items, title = title })
+end
+
+local function is_loclist(buf)
+  buf = buf or 0
+  return vim.fn.getloclist(buf, { filewinid = 1 }).filewinid ~= 0
+end
+
+function M.get_first_letter_uppercase(str)
+  local first_word = str:match "%w+"
+  if first_word then
+    return "[" .. first_word:sub(1, 1):upper() .. "]"
+  end
+  return ""
+end
+
+function M.open_in_qf_or_loc(is_loc, items, title)
+  is_loc = is_loc or is_loclist()
+
+  save_to_qf(is_loc, items, title)
+
+  if is_loc then
+    vim.cmd "lopen"
+    return
+  end
+
+  vim.cmd "copen"
+end
+
 ---Gets a consistent prompt.
 ---
 ---@param title string The original prompt title.
@@ -133,6 +171,23 @@ end
 function M.pad_string(s, length)
   local string_s = tostring(s)
   return string.format("%s%" .. (length - #string_s) .. "s", string_s, " ")
+end
+
+function M.format_title(prefix_title, opts)
+  opts = opts or {}
+  prefix_title = prefix_title or "Octo Fzf-Lua"
+
+  local title_fzf = prefix_title
+
+  if opts.type then
+    title_fzf = title_fzf .. " <type:" .. opts.type .. ">"
+  end
+
+  if #opts.prompt > 0 then
+    title_fzf = title_fzf .. " <prompt:" .. opts.prompt .. ">"
+  end
+
+  return title_fzf
 end
 
 return M
