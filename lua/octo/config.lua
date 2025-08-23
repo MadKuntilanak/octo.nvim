@@ -40,10 +40,27 @@ local M = {}
 ---    review_commits?: OctoSnacksActionList,
 ---  }
 
+---@class OctoFzfluaWinopts
+---@field winopts { -- Actions are now arrays of tables
+---  height?: number,
+---  width?: number,
+---  row?: number,
+---  col?: number,
+---  border?: string,
+---  zindex?: integer,
+---  backdrop?: number|boolean,
+---  fullscreen?: boolean,
+---  title_pos?: string,
+---  treesitter?: fzf-lua.config.TreesitterWinopts,
+---  preview?: fzf-lua.config.PreviewWinopts,
+---  on_close?: fun()
+---}
+
 ---@class OctoPickerConfig
 ---@field use_emojis boolean -- Used by fzf-lua
 ---@field mappings OctoPickerMappings
 ---@field snacks OctoPickerConfigSnacks -- Snacks specific config
+---@field fzflua OctoFzfluaWinopts -- fzf-lua specific config
 
 ---@class OctoConfigColors
 ---@field white string
@@ -175,6 +192,20 @@ function M.get_default_values()
           changed_files = {},
           commits = {},
           review_commits = {},
+        },
+      },
+      fzflua = {
+        winopts = {
+          fullscreen = false,
+          width = 1,
+          height = 0.55,
+          row = 1,
+          col = 0.20,
+          preview = {
+            hidden = false,
+            layout = vertical,
+            vertical = "right:50%",
+          },
         },
       },
     },

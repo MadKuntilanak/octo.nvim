@@ -3,10 +3,13 @@ local fzf_actions = require "octo.pickers.fzf-lua.pickers.fzf_actions"
 local entry_maker = require "octo.pickers.fzf-lua.entry_maker"
 local fzf = require "fzf-lua"
 local gh = require "octo.gh"
+local octo_config = require "octo.config"
 local queries = require "octo.gh.queries"
 local picker_utils = require "octo.pickers.fzf-lua.pickers.utils"
 local utils = require "octo.utils"
 local previewers = require "octo.pickers.fzf-lua.previewers"
+
+local cfg = octo_config.values
 
 return function(opts)
   opts = opts or {}
@@ -53,6 +56,7 @@ return function(opts)
   fzf.fzf_exec(get_contents, {
     previewer = previewers.repo(formatted_repos),
     prompt = picker_utils.get_prompt(opts.prompt_title),
+    winopts = vim.tbl_deep_extend("force", {}, cfg.picker_config.fzflua.winopts),
     fzf_opts = {
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--info"] = "default",
