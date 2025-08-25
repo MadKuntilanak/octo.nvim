@@ -19,6 +19,7 @@ end
 
 return function(opts)
   opts = opts or {}
+
   if not opts.states then
     opts.states = "OPEN"
   end
@@ -27,6 +28,8 @@ return function(opts)
     not_implemented()
     return
   end
+
+  local title_fzf = picker_utils.format_title("PR", opts)
 
   local filter = picker_utils.get_filter(opts, "pull_request")
   if utils.is_blank(opts.repo) then
@@ -69,15 +72,16 @@ return function(opts)
             local entry = entry_maker.gen_from_issue(pull)
 
             if entry ~= nil then
+              local icon_with_hl = utils.get_icon(entry)
+              local icon_str = fzf.utils.ansi_from_hl(icon_with_hl[2], icon_with_hl[1])
+
+              local prefix = fzf.utils.ansi_from_hl("Number", entry.value)
+              local new_formatted_entry = prefix .. " " .. icon_str .. " " .. entry.obj.title
+
+              entry.ordinal = fzf.utils.strip_ansi_coloring(new_formatted_entry)
               formatted_pulls[entry.ordinal] = entry
-              local highlight
-              if entry.obj.isDraft then
-                highlight = "OctoSymbol"
-              else
-                highlight = "OctoStateOpen"
-              end
-              local prefix = fzf.utils.ansi_from_hl(highlight, entry.value)
-              fzf_cb(prefix .. " " .. entry.obj.title)
+
+              fzf_cb(new_formatted_entry)
             end
           end
         end
@@ -91,7 +95,9 @@ return function(opts)
   fzf.fzf_exec(get_contents, {
     prompt = picker_utils.get_prompt(opts.prompt_title),
     previewer = previewers.issue(formatted_pulls),
-    winopts = vim.tbl_deep_extend("force", {}, cfg.picker_config.fzflua.winopts),
+    winopts = vim.tbl_deep_extend("force", {
+      title = title_fzf,
+    }, cfg.picker_config.fzflua.winopts),
     fzf_opts = {
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--info"] = "default",

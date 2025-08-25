@@ -2,8 +2,12 @@
 local entry_maker = require "octo.pickers.fzf-lua.entry_maker"
 local fzf = require "fzf-lua"
 local gh = require "octo.gh"
+local picker_utils = require "octo.pickers.fzf-lua.pickers.utils"
+local octo_config = require "octo.config"
 local previewers = require "octo.pickers.fzf-lua.previewers"
 local utils = require "octo.utils"
+
+local cfg = octo_config.values
 
 -- add a fake entry to represent the entire pull request
 local function make_full_pr(current_review)
@@ -36,6 +40,8 @@ return function(thread_cb)
 
   local url =
     string.format("repos/%s/pulls/%d/commits", current_review.pull_request.repo, current_review.pull_request.number)
+
+  local title_fzf = picker_utils.format_title("Review", current_review.pull_request.repo)
 
   local function get_contents(fzf_cb)
     gh.run {
@@ -76,6 +82,9 @@ return function(thread_cb)
       ["--delimiter"] = "' '",
       ["--with-nth"] = "2..",
     },
+    winopts = vim.tbl_deep_extend("force", {
+      title = title_fzf,
+    }, cfg.picker_config.fzflua.winopts),
     actions = {
       ["default"] = function(selected)
         local entry = formatted_commits[selected[1]]

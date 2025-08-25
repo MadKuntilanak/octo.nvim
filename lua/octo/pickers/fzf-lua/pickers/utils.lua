@@ -95,6 +95,15 @@ function M.get_first_letter_uppercase(str)
   return ""
 end
 
+function M.get_lowercase(str)
+  return str:lower()
+end
+
+function M.get_uppercase_first_letter(str)
+  str = M.get_lowercase(str)
+  return (str:gsub("^%l", string.upper))
+end
+
 function M.open_in_qf_or_loc(is_loc, items, title)
   is_loc = is_loc or is_loclist()
 
@@ -174,20 +183,44 @@ function M.pad_string(s, length)
 end
 
 function M.format_title(prefix_title, opts)
-  opts = opts or {}
   prefix_title = prefix_title or "Octo Fzf-Lua"
 
   local title_fzf = prefix_title
 
-  if opts.type then
-    title_fzf = title_fzf .. " <type:" .. opts.type .. ">"
+  local opts_obj
+
+  if type(opts) == "string" then
+    opts_obj = { repo = opts }
+  elseif type(opts) == "table" then
+    opts_obj = opts
   end
 
-  if #opts.prompt > 0 then
-    title_fzf = title_fzf .. " <prompt:" .. opts.prompt .. ">"
+  -- if opts_obj.type then
+  --   title_fzf = title_fzf .. " <type:" .. opts_obj.type .. ">"
+  -- end
+  --
+  -- if #opts_obj.prompt > 0 then
+  --   title_fzf = title_fzf .. " <prompt:" .. opts_obj.prompt .. ">"
+  -- end
+
+  if opts_obj.type then
+    title_fzf = M.get_uppercase_first_letter(opts_obj.type) .. " " .. title_fzf
   end
 
-  return title_fzf
+  if opts_obj.login then
+    title_fzf = title_fzf .. " - " .. opts_obj.login
+  end
+
+  if opts_obj.prompt and opts.prompt:match "repo:" then
+    local repo = string.match(opts_obj.prompt, "repo:([%w%-%._/]+)")
+    title_fzf = title_fzf .. " - " .. repo
+  end
+
+  if opts_obj.repo then
+    title_fzf = title_fzf .. " - " .. opts_obj.repo
+  end
+
+  return " " .. title_fzf .. " "
 end
 
 return M

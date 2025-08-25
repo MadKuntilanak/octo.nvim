@@ -8,6 +8,7 @@ local queries = require "octo.gh.queries"
 local utils = require "octo.utils"
 local writers = require "octo.ui.writers"
 local config = require "octo.config"
+local fzf = require "fzf-lua"
 
 local M = {}
 
@@ -59,7 +60,7 @@ function M.issue(formatted_issues)
 
   function previewer:populate_preview_buf(entry_str)
     local tmpbuf = self:get_tmp_buffer()
-    local entry = formatted_issues[entry_str]
+    local entry = formatted_issues[fzf.utils.strip_ansi_coloring(entry_str)]
 
     local number = entry.value
     local owner, name = utils.split_repo(entry.repo)
