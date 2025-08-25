@@ -11,25 +11,37 @@ function M.gen_from_issue(issue_table)
     return nil
   end
 
-  local kind, filename
+  local kind, filename, repo, ordinal
+
   if issue_table.__typename == "Issue" then
     kind = "issue"
     filename = utils.get_issue_uri(issue_table.number, issue_table.repository.nameWithOwner)
+    repo = issue_table.repository.nameWithOwner
+    ordinal = issue_table.number .. " " .. issue_table.title
   elseif issue_table.__typename == "PullRequest" then
     kind = "pull_request"
     filename = utils.get_pull_request_uri(issue_table.number, issue_table.repository.nameWithOwner)
+    repo = issue_table.repository.nameWithOwner
+    ordinal = issue_table.number .. " " .. issue_table.title
   elseif issue_table.__typename == "Discussion" then
     kind = "discussion"
     filename = utils.get_discussion_uri(issue_table.number, issue_table.repository.nameWithOwner)
+    repo = issue_table.repository.nameWithOwner
+    ordinal = issue_table.number .. " " .. issue_table.title
+  elseif issue_table.__typename == "Repository" then
+    kind = "repo"
+    filename = utils.get_repo_uri(nil, issue_table.nameWithOwner)
+    repo = issue_table.nameWithOwner
+    ordinal = issue_table.number
   end
 
   return {
     filename = filename,
     kind = kind,
     value = issue_table.number,
-    ordinal = issue_table.number .. " " .. issue_table.title,
+    ordinal = ordinal,
     obj = issue_table,
-    repo = issue_table.repository.nameWithOwner,
+    repo = repo,
   }
 end
 
