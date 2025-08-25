@@ -14,6 +14,8 @@ local cfg = octo_config.values
 return function(opts)
   opts = opts or {}
 
+  local title_fzf = picker_utils.format_title("Repo", opts)
+
   local formatted_repos = {} ---@type table<string, table> entry.ordinal -> entry
 
   local function get_contents(fzf_cb)
@@ -56,7 +58,12 @@ return function(opts)
   fzf.fzf_exec(get_contents, {
     previewer = previewers.repo(formatted_repos),
     prompt = picker_utils.get_prompt(opts.prompt_title),
-    winopts = vim.tbl_deep_extend("force", {}, cfg.picker_config.fzflua.winopts),
+    winopts = vim.tbl_deep_extend("force", {
+      title = title_fzf,
+      previewer = {
+        hidden = true,
+      },
+    }, cfg.picker_config.fzflua.winopts),
     fzf_opts = {
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--info"] = "default",
