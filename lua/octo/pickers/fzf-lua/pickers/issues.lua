@@ -26,7 +26,9 @@ return function(opts)
     return
   end
 
-  local owner, name = utils.split_repo(repo)
+  local owner, name = utils.split_repo(opts.repo)
+  local cfg = octo_config.values
+  local order_by = cfg.issues.order_by
 
   local window_title = utils.pop_key(opts, "window_title") or "Issues"
   local prompt_title = utils.pop_key(opts, "prompt_title")
@@ -57,9 +59,16 @@ return function(opts)
               local entry = entry_maker.gen_from_issue(issue)
 
               if entry ~= nil then
+                local icon_with_hl = utils.get_icon(entry)
+                local icon_str = fzf.utils.ansi_from_hl(icon_with_hl[2], icon_with_hl[1])
+
+                local prefix = fzf.utils.ansi_from_hl("Number", entry.value)
+                local new_formatted_entry = prefix .. " " .. icon_str .. " " .. entry.obj.title
+
+                entry.ordinal = fzf.utils.strip_ansi_coloring(new_formatted_entry)
                 formatted_issues[entry.ordinal] = entry
-                local prefix = fzf.utils.ansi_from_hl("Comment", entry.value)
-                fzf_cb(prefix .. " " .. entry.obj.title)
+
+                fzf_cb(new_formatted_entry)
               end
             end
           end
@@ -80,8 +89,7 @@ return function(opts)
       ["--info"] = "default",
     },
     winopts = vim.tbl_deep_extend("force", {
-      title = opts.window_title or "Issues",
-      title_pos = "center",
+      title = title_fzf,
     }, cfg.picker_config.fzflua.winopts),
     actions = fzf_actions.common_open_actions(formatted_issues),
   })
