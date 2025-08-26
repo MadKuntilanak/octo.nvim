@@ -25,6 +25,7 @@ return function(opts)
 
             if entry ~= nil then
               formatted_commits[entry.ordinal] = entry
+              entry.repo = buffer.repo
               fzf_cb(entry.ordinal)
             end
           end
@@ -39,7 +40,10 @@ return function(opts)
     prompt = opts.prompt_title or "",
     fzf_opts = {
       ["--delimiter"] = " ",
+<<<<<<< HEAD
       ["--info"] = "default",
+=======
+>>>>>>> 0b88d0e (fix(fzf): no handle actions for changed_files and list commits)
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--with-nth"] = "2..",
     },
