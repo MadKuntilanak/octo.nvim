@@ -1084,7 +1084,11 @@ function M.get(kind, ...)
 end
 
 function M.get_repo(_, repo)
-  vim.cmd("edit " .. M.get_repo_uri(_, repo))
+  if repo.nameWithOwner then
+    vim.cmd("edit " .. M.get_repo_uri(_, repo.nameWithOwner .. "/repo"))
+  else
+    vim.cmd("edit " .. M.get_repo_uri(_, repo))
+  end
 end
 
 function M.get_issue(...)

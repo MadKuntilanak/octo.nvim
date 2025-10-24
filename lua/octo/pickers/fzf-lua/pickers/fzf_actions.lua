@@ -83,14 +83,14 @@ function M.common_buffer_actions(formatted_items)
       picker_utils.open_in_qf_or_loc(true, items, "hello")
     end,
     ["alt-Q"] = {
-      prefix = "select-all+accept",
+      prefix = "toggle-all",
       fn = function(selected)
         local items = build_items_qf(formatted_items, selected)
         picker_utils.open_in_qf_or_loc(false, items, "hello")
       end,
     },
     ["alt-V"] = {
-      prefix = "select-all+accept",
+      prefix = "toggle-all",
       fn = function(selected)
         local items = build_items_qf(formatted_items, selected)
         picker_utils.open_in_qf_or_loc(true, items, "hello")
