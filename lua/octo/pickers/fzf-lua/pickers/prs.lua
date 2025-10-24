@@ -32,9 +32,9 @@ return function(opts)
 
   local title_fzf = picker_utils.format_title("PR", opts)
 
-  local filter = picker_utils.get_filter(opts, "pull_request")
-  if utils.is_blank(opts.repo) then
-    opts.repo = utils.get_remote_name()
+  local repo = utils.pop_key(opts, "repo")
+  if utils.is_blank(repo) then
+    repo = utils.get_remote_name()
   end
   if not repo then
     utils.error "Cannot find repo"
