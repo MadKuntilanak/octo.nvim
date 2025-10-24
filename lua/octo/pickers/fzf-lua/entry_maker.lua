@@ -228,7 +228,7 @@ function M.gen_from_repo(repo)
   end
 
   local entry = {
-    filename = utils.get_repo_uri(_, repo),
+    filename = utils.get_repo_uri(_, repo.nameWithOwner),
     kind = "repo",
     value = repo.nameWithOwner,
     ordinal = repo.nameWithOwner .. " " .. repo.description,

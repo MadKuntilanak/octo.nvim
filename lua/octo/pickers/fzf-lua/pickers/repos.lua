@@ -58,12 +58,12 @@ return function(opts)
   fzf.fzf_exec(get_contents, {
     previewer = previewers.repo(formatted_repos),
     prompt = picker_utils.get_prompt(opts.prompt_title),
-    winopts = vim.tbl_deep_extend("force", {
+    winopts = vim.tbl_deep_extend("force", cfg.picker_config.fzflua.winopts, {
       title = title_fzf,
-      previewer = {
+      preview = {
         hidden = true,
       },
-    }, cfg.picker_config.fzflua.winopts),
+    }),
     fzf_opts = {
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--info"] = "default",
