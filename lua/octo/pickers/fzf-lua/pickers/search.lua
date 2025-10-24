@@ -97,11 +97,11 @@ return function(opts)
             _prompt = string.format("%s %s", val, _prompt)
           end
 
-          local output = gh.api.graphql {
+          local output
+          gh.api.graphql {
             query = queries.search,
             fields = { prompt = _prompt, type = opts.type },
             jq = ".data.search.nodes",
-            fields = { prompt = _prompt, type = opts.type },
             opts = {
               cb = gh.create_callback {
                 success = function(stdout)
@@ -118,8 +118,8 @@ return function(opts)
           coroutine.yield()
 
           if utils.is_blank(output) then
-            utils.info(string.format("No results found for query: %s", val))
-            return
+            utils.info(string.format("No results found for query: `'%s'`", _prompt))
+            return {}
           end
 
           local issues = vim.json.decode(output)
