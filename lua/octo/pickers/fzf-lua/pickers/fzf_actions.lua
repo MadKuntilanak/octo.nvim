@@ -74,11 +74,11 @@ function M.common_buffer_actions(formatted_items)
     ["ctrl-t"] = function(selected)
       picker_utils.open("tab", formatted_items[selected[1]])
     end,
-    ["ctrl-q"] = function(selected)
+    ["alt-q"] = function(selected)
       local items = build_items_qf(formatted_items, selected)
       picker_utils.open_in_qf_or_loc(false, items, "hello")
     end,
-    ["alt-l"] = function(selected)
+    ["alt-v"] = function(selected)
       local items = build_items_qf(formatted_items, selected)
       picker_utils.open_in_qf_or_loc(true, items, "hello")
     end,
@@ -89,7 +89,7 @@ function M.common_buffer_actions(formatted_items)
         picker_utils.open_in_qf_or_loc(false, items, "hello")
       end,
     },
-    ["alt-L"] = {
+    ["alt-V"] = {
       prefix = "select-all+accept",
       fn = function(selected)
         local items = build_items_qf(formatted_items, selected)
