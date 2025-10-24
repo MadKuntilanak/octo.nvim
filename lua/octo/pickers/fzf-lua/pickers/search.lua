@@ -77,9 +77,8 @@ return function(opts)
       coroutine.wrap(function() ---@async
         local co = coroutine.running()
 
-        if not opts.prompt and utils.is_blank(query) then
-          fzf_cb()
-          return
+        if not opts.prompt or utils.is_blank(query) then
+          return {}
         end
 
         if type(opts.prompt) == "string" then
