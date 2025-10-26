@@ -79,7 +79,7 @@ return function(current_review, callback)
     fzf_opts = {
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--info"] = "default",
-      ["--delimiter"] = "' '",
+      ["--delimiter"] = " ",
       ["--with-nth"] = "2..",
     },
     winopts = vim.tbl_deep_extend("force", {

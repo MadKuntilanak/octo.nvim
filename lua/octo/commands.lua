@@ -3,6 +3,7 @@ local constants = require "octo.constants"
 local context = require "octo.context"
 local navigation = require "octo.navigation"
 local gh = require "octo.gh"
+local headers = require "octo.gh.headers"
 local graphql = require "octo.gh.graphql"
 local queries = require "octo.gh.queries"
 local mutations = require "octo.gh.mutations"
@@ -521,10 +522,10 @@ function M.setup()
       end,
       checks = context.within_pr(M.pr_checks),
       ready = context.within_pr(function(buffer)
-        M.gh_pr_ready { number = buffer.number, bufnr = buffer.bufnr, undo = false }
+        M.gh_pr_ready { pr = buffer:pullRequest(), bufnr = buffer.bufnr, undo = false }
       end),
       draft = context.within_pr(function(buffer)
-        M.gh_pr_ready { number = buffer.number, bufnr = buffer.bufnr, undo = true }
+        M.gh_pr_ready { pr = buffer:pullRequest(), bufnr = buffer.bufnr, undo = true }
       end),
       search = function(repo, ...)
         local opts = M.process_varargs(repo, ...)
@@ -550,6 +551,13 @@ function M.setup()
         M.copy_url()
       end,
       sha = M.copy_sha,
+      update = context.within_pr(function(buffer)
+        gh.pr.update_branch {
+          buffer:pullRequest().number,
+          repo = buffer:pullRequest().baseRepository.nameWithOwner,
+          opts = { cb = gh.create_callback {} },
+        }
+      end),
     },
     repo = {
       search = function(prompt)
@@ -1716,7 +1724,7 @@ function M.save_pr(opts)
 end
 
 --- @class PRReadyOpts
---- @field number integer PR number
+--- @field pr octo.PullRequest The PR
 --- @field bufnr integer Buffer number
 --- @field undo boolean Whether to undo from ready to draft
 
@@ -1724,7 +1732,8 @@ end
 --- @param opts PRReadyOpts
 function M.gh_pr_ready(opts)
   gh.pr.ready {
-    opts.number,
+    opts.pr.number,
+    repo = opts.pr.baseRepository.nameWithOwner,
     undo = opts.undo,
     opts = {
       cb = gh.create_callback {
@@ -1901,17 +1910,22 @@ function M.merge_pr(...)
     return
   end
 
-  local args = { "pr", "merge", tostring(buffer.number) }
+  local node = buffer:pullRequest()
+
+  local opts = {
+    buffer.number,
+    repo = node.baseRepository.nameWithOwner,
+  }
+
   local params = table.pack(...)
   local conf = config.values
 
   local merge_method = conf.default_merge_method
   for _, param in ipairs(params) do
     if utils.merge_method_to_flag[param] then
-      merge_method = param
+      opts[param] = true
     end
   end
-  utils.insert_merge_flag(args, merge_method)
 
   local delete_branch = conf.default_delete_branch
   for _, param in ipairs(params) do
@@ -1922,21 +1936,23 @@ function M.merge_pr(...)
       delete_branch = false
     end
   end
-  utils.insert_delete_flag(args, delete_branch)
+  opts["delete-branch"] = delete_branch
 
   for _, param in ipairs(params) do
     if utils.merge_queue_to_flag[param] then
-      utils.insert_merge_flag(args, param)
+      opts["auto"] = true
     end
   end
 
-  gh.run {
-    args = args,
-    cb = function(output, stderr)
-      utils.info(output .. " " .. stderr)
+  opts.opts = {
+    cb = function(output, stderr, exit_code)
+      local log = exit_code == 0 and utils.info or utils.error
+      log(output .. " " .. stderr)
       writers.write_state(buffer.bufnr)
     end,
   }
+
+  gh.pr.merge(opts)
 end
 
 function M.show_pr_diff()
@@ -1948,7 +1964,7 @@ function M.show_pr_diff()
   local url = string.format("/repos/%s/pulls/%s", buffer.repo, buffer.number)
   gh.run {
     args = { "api", "--paginate", url },
-    headers = { "Accept: application/vnd.github.v3.diff" },
+    headers = { headers.diff },
     cb = function(output, stderr)
       if stderr and not utils.is_blank(stderr) then
         utils.error(stderr)

@@ -40,6 +40,7 @@ return function(opts)
     prompt = opts.prompt_title or "",
     fzf_opts = {
       ["--delimiter"] = " ",
+      ["--info"] = "default",
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--with-nth"] = "2..",
     },

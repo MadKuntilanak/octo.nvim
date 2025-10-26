@@ -5,6 +5,7 @@ local config = require "octo.config"
 local constants = require "octo.constants"
 local folds = require "octo.folds"
 local gh = require "octo.gh"
+local headers = require "octo.gh.headers"
 local graphql = require "octo.gh.graphql"
 local mutations = require "octo.gh.mutations"
 local signs = require "octo.ui.signs"
@@ -196,6 +197,7 @@ function OctoBuffer:render_issue()
   local unrendered_unlabeled_events = {} ---@type octo.fragments.UnlabeledEvent[]
   local unrendered_subissue_added_events = {} ---@type octo.fragments.SubIssueAddedEvent[]
   local unrendered_subissue_removed_events = {} ---@type octo.fragments.SubIssueRemovedEvent[]
+  local unrendered_force_push_events = {} ---@type octo.fragments.HeadRefForcePushedEvent[]
   local commits = {} ---@type octo.fragments.PullRequestCommit[]
   local prev_is_event = false
 
@@ -236,6 +238,11 @@ function OctoBuffer:render_issue()
     if (not item or item.__typename ~= "PullRequestCommit") and #commits > 0 then
       writers.write_commits(self.bufnr, commits)
       commits = {}
+      prev_is_event = true
+    end
+    if (not item or item.__typename ~= "HeadRefForcePushedEvent") and #unrendered_force_push_events > 0 then
+      writers.write_head_ref_force_pushed_events(self.bufnr, unrendered_force_push_events)
+      unrendered_force_push_events = {}
       prev_is_event = true
     end
   end
@@ -359,6 +366,33 @@ function OctoBuffer:render_issue()
     elseif item.__typename == "ReadyForReviewEvent" then
       writers.write_ready_for_review_event(self.bufnr, item)
       prev_is_event = true
+    elseif item.__typename == "DeployedEvent" then
+      writers.write_deployed_event(self.bufnr, item)
+      prev_is_event = true
+    elseif item.__typename == "HeadRefDeletedEvent" then
+      writers.write_head_ref_deleted_event(self.bufnr, item)
+      prev_is_event = true
+    elseif item.__typename == "HeadRefRestoredEvent" then
+      writers.write_head_ref_restored_event(self.bufnr, item)
+      prev_is_event = true
+    elseif item.__typename == "HeadRefForcePushedEvent" then
+      table.insert(unrendered_force_push_events, item)
+    elseif item.__typename == "AutoSquashEnabledEvent" then
+      writers.write_auto_squash_enabled_event(self.bufnr, item)
+      prev_is_event = true
+    elseif item.__typename == "AddedToProjectV2Event" then
+      writers.write_added_to_project_v2_event(self.bufnr, item)
+      prev_is_event = true
+    elseif item.__typename == "RemovedFromProjectV2Event" then
+      writers.write_removed_from_project_v2_event(self.bufnr, item)
+      prev_is_event = true
+    elseif item.__typename == "ProjectV2ItemStatusChangedEvent" then
+      writers.write_project_v2_item_status_changed_event(self.bufnr, item)
+      prev_is_event = true
+    elseif not utils.is_blank(item) and config.values.debug.notify_missing_timeline_items then
+      ---@diagnostic disable-next-line
+      local info = item.__typename and item.__typename or vim.inspect(item)
+      utils.info("Unhandled timeline item: " .. info)
     end
   end
   render_accumulated_events()
@@ -941,7 +975,7 @@ function OctoBuffer:do_add_pull_request_comment(comment_metadata)
       "--jq",
       ".",
     },
-    headers = { "Accept: application/vnd.github.v3+json" },
+    headers = { headers.json },
     cb = function(output, stderr)
       if not utils.is_blank(stderr) then
         utils.error(stderr)

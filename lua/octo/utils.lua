@@ -25,6 +25,21 @@ M.viewed_state_map = {
   UNVIEWED = { icon = "󰄰 ", hl = "OctoBlue" },
 }
 
+---@type table<DeploymentState, table<string, string>>
+M.deployed_state_map = {
+  ABANDONED = { "Abandoned", "OctoBubbleRed" },
+  ACTIVE = { "Active", "OctoBubbleGreen" },
+  DESTROYED = { "Destroyed", "OctoBubbleGray" },
+  ERROR = { "Error", "OctoBubbleRed" },
+  FAILURE = { "Failure", "OctoBubbleRed" },
+  INACTIVE = { "Inactive", "OctoBubbleGrey" },
+  IN_PROGRESS = { "In Progress", "OctoBubbleYellow" },
+  PENDING = { "Pending", "OctoBubbleYellow" },
+  QUEUED = { "Queued", "OctoBubbleYellow" },
+  SUCCESS = { "Success", "OctoBubbleGreen" },
+  WAITING = { "Waiting", "OctoBubbleYellow" },
+}
+
 M.state_msg_map = {
   APPROVED = "approved",
   CHANGES_REQUESTED = "requested changes",
@@ -603,12 +618,14 @@ end
 
 M.merge_queue_to_flag = {
   queue = "--queue",
+  auto = "--auto",
 }
 
 M.merge_method_to_flag = {
   squash = "--squash",
   rebase = "--rebase",
   commit = "--merge",
+  merge = "--merge",
 }
 
 ---@param args string[]
@@ -695,7 +712,7 @@ function M.format_seconds(seconds)
 end
 
 ---Formats a string as a date
----@param date_string string
+---@param date_string string ISO 8601 date string in UTC format
 ---@return integer time in seconds since epoch
 function M.parse_utc_date(date_string)
   -- Parse the input date string (assumed to be in UTC)
@@ -709,6 +726,37 @@ function M.parse_utc_date(date_string)
     sec = sec,
     isdst = false, -- Input is in UTC
   }
+end
+
+---Relative date options
+---@class DateOpts
+---@field minutes? integer
+---@field hours? integer
+---@field days? integer
+---@field weeks? integer
+
+---@param opts DateOpts
+---@param reference? string|osdate|number Optional reference date (ISO string or os.time() or os.date table)
+function M.relative_date(opts, reference)
+  ---@type integer
+  local ref_ts
+  if type(reference) == "string" then
+    ref_ts = M.parse_utc_date(reference)
+  elseif type(reference) == "table" then
+    ref_ts = os.time(reference)
+  elseif type(reference) == "number" then
+    ref_ts = reference
+  else
+    ref_ts = os.time()
+  end
+
+  local delta = (opts.minutes or 0) * 60
+    + (opts.hours or 0) * 3600
+    + (opts.days or 0) * 86400
+    + (opts.weeks or 0) * 604800
+  local new_ts = ref_ts - delta
+
+  return os.date("!%Y-%m-%dT%H:%M:%SZ", new_ts)
 end
 
 ---@param start_date string

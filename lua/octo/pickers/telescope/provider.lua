@@ -1,6 +1,7 @@
 ---@diagnostic disable
 local gh = require "octo.gh"
 local graphql = require "octo.gh.graphql"
+local headers = require "octo.gh.headers"
 local queries = require "octo.gh.queries"
 local parser = require "octo.gh.parser"
 local navigation = require "octo.navigation"
@@ -1320,6 +1321,7 @@ end
 ---@class NotificationOpts
 ---@field repo string
 ---@field all boolean Whether to show all of the notifications including read ones
+---@field since string ISO 8601 timestamp
 ---@field preview_title string
 ---@field prompt_title string
 ---@field results_title string
@@ -1407,9 +1409,10 @@ function M.notifications(opts)
     paginate = true,
     F = {
       all = opts.all,
+      since = opts.since,
     },
     opts = {
-      headers = { "Accept: application/vnd.github.v3.diff" },
+      headers = { headers.diff },
       cb = gh.create_callback { success = create_notification_picker },
     },
   }
