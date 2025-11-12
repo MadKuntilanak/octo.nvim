@@ -8,10 +8,16 @@ local utils = require "octo.utils"
 
 ---@param opts {repo: string, number: integer, prompt_title: string?}
 return function(opts)
+  opts = opts or {}
+  local buffer = utils.get_current_buffer()
+  if not buffer or not buffer:isPullRequest() then
+    return
+  end
+
   local formatted_files = {}
 
   local function get_contents(fzf_cb)
-    local url = string.format("repos/%s/pulls/%d/files", opts.repo, opts.number)
+    local url = string.format("repos/%s/pulls/%d/files", buffer.repo, buffer.number)
     gh.run {
       args = { "api", "--paginate", url },
       cb = function(output, stderr)
