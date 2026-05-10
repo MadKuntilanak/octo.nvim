@@ -103,11 +103,7 @@ local function is_loclist(buf)
 end
 
 function M.get_first_letter_uppercase(str)
-  local first_word = str:match "%w+"
-  if first_word then
-    return "[" .. first_word:sub(1, 1):upper() .. "]"
-  end
-  return ""
+  return "[" .. str:upper() .. "]"
 end
 
 function M.get_lowercase(str)
