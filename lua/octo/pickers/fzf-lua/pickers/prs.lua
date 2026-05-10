@@ -104,7 +104,7 @@ return function(opts)
       title = title_fzf,
     }, cfg.picker_config.fzflua.winopts),
     fzf_opts = {
-      ["--no-multi"] = "", -- TODO this can support multi, maybe.
+      ["--no-multi"] = false,
       ["--info"] = "default",
     },
     winopts = {

@@ -18,7 +18,7 @@ local function format_entry_item(opts)
     end
 
     if opts.kind == "discussion" then
-      local closed = opts.obj.closed and "[C]" or "[O]"
+      local closed = opts.obj.closed and "[Completed]" or "[Open]"
       if closed then
         text = closed .. " " .. text
       end
