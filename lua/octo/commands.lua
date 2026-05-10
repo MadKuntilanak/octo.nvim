@@ -27,6 +27,22 @@ OctoLastCmdOpts = nil
 
 local M = {}
 
+-- Helper function to extract hostname from octo:// buffer URL
+local function get_hostname_from_buffer()
+  local bufname = vim.fn.bufname()
+  if bufname:match "^octo://" then
+    -- Try to parse with hostname: octo://hostname/owner/repo/kind/id
+    -- vs without hostname: octo://owner/repo/kind/id
+    local first_segment = bufname:match "^octo://([^/]+)"
+
+    -- Check if this looks like a hostname (contains a dot) vs owner name
+    if first_segment and first_segment:match "%." then
+      return first_segment
+    end
+  end
+  return nil
+end
+
 local function merge_tables(t1, t2)
   local result = vim.deepcopy(t1)
   for k, v in pairs(t2) do
@@ -37,6 +53,43 @@ local function merge_tables(t1, t2)
     end
   end
   return result
+end
+
+---@param subscribable_id string
+---@param current_subscription octo.SubscriptionState
+---@param display_name string
+---@param on_success fun(new_subscription_state: octo.SubscriptionState): nil
+local function update_subscription(subscribable_id, current_subscription, display_name, on_success)
+  ---@type {[string]: octo.SubscriptionState}
+  local subscription_options = {
+    Subscribe = "SUBSCRIBED",
+    Unsubscribe = "UNSUBSCRIBED",
+    Ignore = "IGNORED",
+  }
+  vim.ui.select(vim.fn.keys(subscription_options), {
+    prompt = "Select subscription state:",
+  }, function(choice)
+    if choice == nil then
+      utils.info(
+        "Subscription update cancelled. You are still " .. utils.title_case(current_subscription or "UNSUBSCRIBED")
+      )
+      return
+    end
+    local state = subscription_options[choice]
+    gh.api.graphql {
+      query = mutations.update_subscription,
+      fields = { subscribable_id = subscribable_id, state = state },
+      jq = ".data.updateSubscription.subscribable.viewerSubscription",
+      opts = {
+        cb = gh.create_callback {
+          success = function()
+            utils.info("Subscription updated to " .. state .. " for " .. display_name)
+            on_success(state)
+          end,
+        },
+      },
+    }
+  end)
 end
 
 function M.setup()
@@ -98,9 +151,15 @@ function M.setup()
     search = function(...)
       M.search(...)
     end,
+    limits = function()
+      require("octo.ratelimit").show_rate_limits()
+    end,
     discussion = {
       browser = function()
         navigation.open_in_browser()
+      end,
+      edit = function(...)
+        utils.get_discussion(...)
       end,
       reload = function()
         M.reload { verbose = true }
@@ -185,6 +244,17 @@ function M.setup()
             },
           }
         end)
+      end),
+      subscription = context.within_discussion(function(buffer)
+        local discussion = buffer:discussion()
+        update_subscription(
+          discussion.id,
+          discussion.viewerSubscription,
+          "discussion #" .. discussion.number,
+          function(new_subscription_state)
+            discussion.viewerSubscription = new_subscription_state
+          end
+        )
       end),
     },
     type = {
@@ -328,8 +398,7 @@ function M.setup()
           return
         end
 
-        local uri = string.format("octo://%s/issue/%s", buffer.repo, parent.number)
-        vim.cmd.edit(uri)
+        utils.get_issue(parent.number, buffer.repo)
       end),
       remove = context.within_issue(function(buffer)
         local parent = buffer.issue().parent
@@ -372,6 +441,32 @@ function M.setup()
                 success = function(response_id)
                   if response_id == buffer:issue().id then
                     utils.info "Issue added as sub-issue"
+                  end
+                end,
+              },
+            },
+          }
+        end
+
+        picker.issues(opts)
+      end),
+    },
+    child = {
+      add = context.within_issue(function(buffer)
+        local opts = {}
+        opts.cb = function(selected)
+          gh.api.graphql {
+            query = mutations.add_subissue,
+            fields = {
+              parent_id = buffer:issue().id,
+              child_id = selected.obj.id,
+            },
+            jq = ".data.addSubIssue.subIssue.id",
+            opts = {
+              cb = gh.create_callback {
+                success = function(response_id)
+                  if response_id == selected.obj.id then
+                    utils.info "Sub-issue added to the issue"
                   end
                 end,
               },
@@ -456,6 +551,18 @@ function M.setup()
       url = function()
         M.copy_url()
       end,
+      subscription = context.within_issue(function(buffer)
+        local issue = buffer:issue()
+        update_subscription(
+          issue.id,
+          issue.viewerSubscription,
+          "issue #" .. issue.number,
+          function(new_subscription_state)
+            issue.viewerSubscription = new_subscription_state
+            writers.write_details(buffer.bufnr, issue, true)
+          end
+        )
+      end),
     },
     pr = {
       copilot = context.within_pr(function(buffer)
@@ -558,8 +665,19 @@ function M.setup()
           opts = { cb = gh.create_callback {} },
         }
       end),
+      subscription = context.within_pr(function(buffer)
+        local pr = buffer:pullRequest()
+        update_subscription(pr.id, pr.viewerSubscription, "PR #" .. pr.number, function(new_subscription_state)
+          pr.viewerSubscription = new_subscription_state
+          writers.write_details(buffer.bufnr, pr, true)
+        end)
+      end),
     },
     release = {
+      list = function(repo)
+        local opts = { repo = repo }
+        picker.releases(opts)
+      end,
       notes = function(tag_name)
         local repo = utils.get_remote_name()
         if utils.is_blank(tag_name) then
@@ -603,6 +721,34 @@ function M.setup()
           prompt = prompt,
         }
       end,
+      unstar = context.within_repo(function(buffer)
+        gh.api.graphql {
+          query = mutations.unstar_repo,
+          fields = { repo_id = buffer:repository().id },
+          jq = ".data.removeStar.starrable.id",
+          opts = {
+            cb = gh.create_callback {
+              success = function()
+                utils.info("Unstarred " .. buffer:repository().nameWithOwner)
+              end,
+            },
+          },
+        }
+      end),
+      star = context.within_repo(function(buffer)
+        gh.api.graphql {
+          query = mutations.star_repo,
+          fields = { repo_id = buffer:repository().id },
+          jq = ".data.addStar.starrable.id",
+          opts = {
+            cb = gh.create_callback {
+              success = function()
+                utils.info("Starred " .. buffer:repository().nameWithOwner)
+              end,
+            },
+          },
+        }
+      end),
       list = function(login)
         local opts = { login = login }
 
@@ -636,6 +782,12 @@ function M.setup()
       url = function()
         M.copy_url()
       end,
+      subscription = context.within_repo(function(buffer)
+        local repo = buffer:repository()
+        update_subscription(repo.id, repo.viewerSubscription, repo.nameWithOwner, function(new_subscription_state)
+          repo.viewerSubscription = new_subscription_state
+        end)
+      end),
     },
     review = {
       browse = function()
@@ -712,28 +864,22 @@ function M.setup()
         current_review:add_comment(true)
       end),
       reply = M.add_pr_issue_or_review_thread_comment_reply,
-      url = function()
-        local buffer = utils.get_current_buffer()
-
-        if not buffer then
-          return
-        end
-
-        local comment = buffer:get_comment_at_cursor()
-        if not comment then
-          utils.error "The cursor does not seem to be located at any comment"
-          return
-        end
-
+      url = context.on_comment(function(comment)
         gh.api.graphql {
           query = queries.comment_url,
           f = { id = comment.id },
           jq = ".data.node.url",
           opts = { cb = gh.create_callback { success = utils.copy_url } },
         }
+      end),
+      reference = function()
+        M.reference_in_new_issue()
       end,
       delete = function()
         M.delete_comment()
+      end,
+      edits = function()
+        M.comment_edits()
       end,
     },
     label = {
@@ -947,6 +1093,44 @@ function M.setup()
         picker.notifications(opts)
       end,
     },
+    poll = {
+      start = function()
+        require("octo.polling").start()
+      end,
+      stop = function()
+        require("octo.polling").stop()
+      end,
+      toggle = function()
+        require("octo.polling").toggle()
+      end,
+      status = function()
+        local polling = require "octo.polling"
+        local s = polling.status()
+        local lines = {
+          string.format("Polling enabled: %s", tostring(s.enabled)),
+          string.format("Timer running: %s", tostring(s.running)),
+          string.format("Tracked buffers: %d", s.tracked_count),
+        }
+        for bufnr, entry in pairs(s.buffers) do
+          table.insert(
+            lines,
+            string.format(
+              "  buf %d: %s/%s #%d (%s)%s",
+              bufnr,
+              entry.owner,
+              entry.name,
+              entry.number,
+              entry.kind,
+              entry.remote_changed and " [remote changed]" or ""
+            )
+          )
+        end
+        utils.info(table.concat(lines, "\n"))
+      end,
+      apply = function()
+        require("octo.polling").apply_pending()
+      end,
+    },
   }
 
   setmetatable(M.commands.pr, {
@@ -1013,15 +1197,41 @@ function M.octo(object, action, ...)
     end
     return
   end
+  -- :Octo 42  or  :Octo 42 owner/repo
+  local number = tonumber(object)
+  if number then
+    local repo = action or utils.get_remote_name()
+    utils.open_buffer(repo, number)
+    return
+  end
+
   local o = M.commands[object]
   if not o then
-    local repo, number, kind = utils.parse_url(object)
+    local hostname, repo, number, kind = utils.parse_url(object)
     if repo and number and kind == "issue" then
-      utils.get_issue(number, repo)
+      if hostname and hostname ~= "github.com" then
+        vim.cmd(string.format("edit octo://%s/%s/issue/%s", hostname, repo, number))
+      else
+        utils.get_issue(number, repo)
+      end
     elseif repo and number and kind == "pull" then
-      utils.get_pull_request(number, repo)
+      if hostname and hostname ~= "github.com" then
+        vim.cmd(string.format("edit octo://%s/%s/pull/%s", hostname, repo, number))
+      else
+        utils.get_pull_request(number, repo)
+      end
     elseif repo and number and kind == "discussion" then
-      utils.get_discussion(number, repo)
+      if hostname and hostname ~= "github.com" then
+        vim.cmd(string.format("edit octo://%s/%s/discussion/%s", hostname, repo, number))
+      else
+        utils.get_discussion(number, repo)
+      end
+    elseif repo and number and kind == "release" then
+      if hostname and hostname ~= "github.com" then
+        vim.cmd(string.format("edit octo://%s/%s/release/%s", hostname, repo, number))
+      else
+        utils.get_release(number, repo)
+      end
     else
       utils.error("Incorrect argument: " .. object)
       return
@@ -1225,100 +1435,151 @@ function M.delete_comment()
 
   local choice = vim.fn.confirm("Delete comment?", "&Yes\n&No\n&Cancel", 2)
   if choice == 1 then
-    gh.run {
-      args = { "api", "graphql", "-f", string.format("query=%s", query) },
-      cb = function(output)
-        -- TODO: deleting the last review thread comment, it deletes the whole thread and review
-        -- In issue buffers, we should hide the thread snippet
-        local resp = vim.json.decode(output)
+    gh.api.graphql {
+      f = { query = query },
+      opts = {
+        cb = gh.create_callback {
+          success = function(output)
+            -- TODO: deleting the last review thread comment, it deletes the whole thread and review
+            -- In issue buffers, we should hide the thread snippet
+            local resp = vim.json.decode(output)
 
-        -- remove comment lines from the buffer
-        if comment.reactionLine then
-          vim.api.nvim_buf_set_lines(buffer.bufnr, start_line - 2, end_line + 1, false, {})
-          vim.api.nvim_buf_clear_namespace(buffer.bufnr, constants.OCTO_REACTIONS_VT_NS, start_line - 2, end_line + 1)
-        else
-          vim.api.nvim_buf_set_lines(buffer.bufnr, start_line - 2, end_line - 1, false, {})
-        end
-        vim.api.nvim_buf_clear_namespace(buffer.bufnr, comment.namespace, 0, -1)
-        vim.api.nvim_buf_del_extmark(buffer.bufnr, constants.OCTO_COMMENT_NS, comment.extmark)
-        local comments = buffer.commentsMetadata
-        if comments then
-          local updated = {}
-          for _, c in ipairs(comments) do
-            if c.id ~= comment.id then
-              table.insert(updated, c)
+            -- remove comment lines from the buffer
+            if comment.reactionLine then
+              vim.api.nvim_buf_set_lines(buffer.bufnr, start_line - 2, end_line + 1, false, {})
+              vim.api.nvim_buf_clear_namespace(
+                buffer.bufnr,
+                constants.OCTO_REACTIONS_VT_NS,
+                start_line - 2,
+                end_line + 1
+              )
+            else
+              vim.api.nvim_buf_set_lines(buffer.bufnr, start_line - 2, end_line - 1, false, {})
             end
-          end
-          buffer.commentsMetadata = updated
-        end
-
-        if comment.kind == "PullRequestReviewComment" then
-          local review = reviews.get_current_review()
-          if not review then
-            utils.error "Cannot find review for this comment"
-            return
-          end
-
-          local threads = resp.data.deletePullRequestReviewComment.pullRequestReview.pullRequest.reviewThreads.nodes
-
-          -- check if there is still at least a PENDING comment
-          local review_was_deleted = true
-          for _, thread in ipairs(threads) do
-            for _, c in ipairs(thread.comments.nodes) do
-              if c.state == "PENDING" then
-                review_was_deleted = false
-                break
+            vim.api.nvim_buf_clear_namespace(buffer.bufnr, comment.namespace, 0, -1)
+            vim.api.nvim_buf_del_extmark(buffer.bufnr, constants.OCTO_COMMENT_NS, comment.extmark)
+            local comments = buffer.commentsMetadata
+            if comments then
+              local updated = {}
+              for _, c in ipairs(comments) do
+                if c.id ~= comment.id then
+                  table.insert(updated, c)
+                end
               end
+              buffer.commentsMetadata = updated
             end
-          end
-          if review_was_deleted then
-            -- we deleted the last pending comment and therefore GitHub closed the review, create a new one
-            review:create(function(resp)
-              review.id = resp.data.addPullRequestReview.pullRequestReview.id
-              local updated_threads = resp.data.addPullRequestReview.pullRequestReview.pullRequest.reviewThreads.nodes
-              review:update_threads(updated_threads)
-            end)
-          else
-            review:update_threads(threads)
-          end
 
-          -- check if we removed the last comment of a thread
-          local thread_was_deleted = true
-          for _, thread in ipairs(threads) do
-            if threadId == thread.id then
-              thread_was_deleted = false
-              break
-            end
-          end
-          if thread_was_deleted then
-            -- this was the last comment, close the thread buffer
-            -- No comments left
-            utils.error("Deleting buffer " .. tostring(buffer.bufnr))
-            local bufname = vim.api.nvim_buf_get_name(buffer.bufnr)
-            local split = string.match(bufname, "octo://.+/review/[^/]+/threads/([^/]+)/.*")
-            if split then
-              local layout = reviews.get_current_review().layout
-              local file = layout:get_current_file()
-              if not file then
+            if comment.kind == "PullRequestReviewComment" then
+              local review = reviews.get_current_review()
+              if not review then
+                utils.error "Cannot find review for this comment"
                 return
               end
-              local thread_win = file:get_alternative_win(split)
-              local original_buf = file:get_alternative_buf(split)
-              -- move focus to the split containing the diff buffer
-              -- restore the diff buffer so that window is not closed when deleting thread buffer
-              vim.api.nvim_win_set_buf(thread_win, original_buf)
-              -- delete the thread buffer
-              pcall(vim.api.nvim_buf_delete, buffer.bufnr, { force = true })
-              -- refresh signs and virtual text
-              file:place_signs()
-              -- diff buffers
-              file:show_diff()
-            end
-          end
-        end
-      end,
+
+              local threads = resp.data.deletePullRequestReviewComment.pullRequestReview.pullRequest.reviewThreads.nodes
+
+              -- check if there is still at least a PENDING comment
+              local review_was_deleted = true
+              for _, thread in ipairs(threads) do
+                for _, c in ipairs(thread.comments.nodes) do
+                  if c.state == "PENDING" then
+                    review_was_deleted = false
+                    break
+                  end
+                end
+              end
+              if review_was_deleted then
+                -- we deleted the last pending comment and therefore GitHub closed the review, create a new one
+                review:create(function(resp)
+                  review.id = resp.data.addPullRequestReview.pullRequestReview.id
+                  local updated_threads =
+                    resp.data.addPullRequestReview.pullRequestReview.pullRequest.reviewThreads.nodes
+                  review:update_threads(updated_threads)
+                end)
+              else
+                review:update_threads(threads)
+              end
+
+              -- check if we removed the last comment of a thread
+              local thread_was_deleted = true
+              for _, thread in ipairs(threads) do
+                if threadId == thread.id then
+                  thread_was_deleted = false
+                  break
+                end
+              end
+              if thread_was_deleted then
+                -- this was the last comment, close the thread buffer
+                -- No comments left
+                utils.error("Deleting buffer " .. tostring(buffer.bufnr))
+                local bufname = vim.api.nvim_buf_get_name(buffer.bufnr)
+                local split = string.match(bufname, "octo://.+/review/[^/]+/threads/([^/]+)/.*")
+                if split then
+                  local layout = reviews.get_current_review().layout
+                  local file = layout:get_current_file()
+                  if not file then
+                    return
+                  end
+                  local thread_win = file:get_alternative_win(split)
+                  local original_buf = file:get_alternative_buf(split)
+                  -- move focus to the split containing the diff buffer
+                  -- restore the diff buffer so that window is not closed when deleting thread buffer
+                  vim.api.nvim_win_set_buf(thread_win, original_buf)
+                  -- delete the thread buffer
+                  pcall(vim.api.nvim_buf_delete, buffer.bufnr, { force = true })
+                  -- refresh signs and virtual text
+                  file:place_signs()
+                  -- diff buffers
+                  file:show_diff()
+                end
+              end
+            end -- if comment.kind == "PullRequestReviewComment"
+          end,
+        },
+      },
     }
   end
+end
+
+function M.comment_edits()
+  local buffer = utils.get_current_buffer()
+  if not buffer then
+    return
+  end
+
+  local node_id
+  local comment = buffer:get_comment_at_cursor()
+  if comment then
+    node_id = comment.id
+  else
+    local body_metadata = buffer:get_body_at_cursor()
+    if body_metadata then
+      node_id = buffer.node.id
+    end
+  end
+
+  if not node_id then
+    utils.error "The cursor does not seem to be located at any comment or body"
+    return
+  end
+
+  gh.api.graphql {
+    query = queries.comment_edits,
+    fields = { id = node_id },
+    jq = ".data.node.userContentEdits",
+    opts = {
+      cb = gh.create_callback {
+        success = function(output)
+          local result = vim.json.decode(output)
+          if not result or not result.nodes or #result.nodes == 0 then
+            utils.info "This comment has no edit history"
+            return
+          end
+          picker.comment_edits(result.nodes)
+        end,
+      },
+    },
+  }
 end
 
 local function update_review_thread_header(bufnr, thread, thread_id, thread_line)
@@ -1359,20 +1620,20 @@ function M.resolve_thread()
   local thread_id = _thread.threadId
   local thread_line = _thread.bufferStartLine
   local query = graphql("resolve_review_thread_mutation", thread_id)
-  gh.run {
-    args = { "api", "graphql", "-f", string.format("query=%s", query) },
-    cb = function(output, stderr)
-      if stderr and not utils.is_blank(stderr) then
-        utils.error(stderr)
-      elseif output then
-        local resp = vim.json.decode(output)
-        local thread = resp.data.resolveReviewThread.thread
-        if thread.isResolved then
-          update_review_thread_header(buffer.bufnr, thread, thread_id, thread_line)
-          --vim.cmd(string.format("%d,%dfoldclose", thread_line, thread_line))
-        end
-      end
-    end,
+  gh.api.graphql {
+    f = { query = query },
+    opts = {
+      cb = gh.create_callback {
+        success = function(output)
+          local resp = vim.json.decode(output)
+          local thread = resp.data.resolveReviewThread.thread
+          if thread.isResolved then
+            update_review_thread_header(buffer.bufnr, thread, thread_id, thread_line)
+            --vim.cmd(string.format("%d,%dfoldclose", thread_line, thread_line))
+          end
+        end,
+      },
+    },
   }
 end
 
@@ -1389,19 +1650,19 @@ function M.unresolve_thread()
   local thread_id = _thread.threadId
   local thread_line = _thread.bufferStartLine
   local query = graphql("unresolve_review_thread_mutation", thread_id)
-  gh.run {
-    args = { "api", "graphql", "-f", string.format("query=%s", query) },
-    cb = function(output, stderr)
-      if stderr and not utils.is_blank(stderr) then
-        utils.error(stderr)
-      elseif output then
-        local resp = vim.json.decode(output)
-        local thread = resp.data.unresolveReviewThread.thread
-        if not thread.isResolved then
-          update_review_thread_header(buffer.bufnr, thread, thread_id, thread_line)
-        end
-      end
-    end,
+  gh.api.graphql {
+    f = { query = query },
+    opts = {
+      cb = gh.create_callback {
+        success = function(output)
+          local resp = vim.json.decode(output)
+          local thread = resp.data.unresolveReviewThread.thread
+          if not thread.isResolved then
+            update_review_thread_header(buffer.bufnr, thread, thread_id, thread_line)
+          end
+        end,
+      },
+    },
   }
 end
 
@@ -1470,10 +1731,57 @@ function M.change_state(state)
   }
 end
 
+function M.reference_in_new_issue()
+  context.on_comment_in_buffer(function(comment, buffer)
+    -- Use savedBody (last synced) for the comment content
+    local comment_body = comment.savedBody or comment.body or ""
+
+    -- Title defaults to the first non-blank line of the comment body
+    local base_title = ""
+    for line in comment_body:gmatch "[^\n]+" do
+      local trimmed = vim.trim(line)
+      if trimmed ~= "" then
+        base_title = trimmed
+        break
+      end
+    end
+
+    -- Fetch comment URL and author in one query, then open the new issue form
+    gh.api.graphql {
+      query = queries.comment_url,
+      f = { id = comment.id },
+      jq = ".data.node",
+      opts = {
+        cb = gh.create_callback {
+          success = function(output)
+            local node = vim.json.decode(output)
+            local url = node and node.url or ""
+            local author = node and node.author and node.author.login or ""
+
+            -- Build body: full comment body + attribution footer
+            local attribution = string.format("_Originally posted by @%s in %s_", author, url)
+            local base_body = comment_body .. "\n\n" .. attribution
+
+            M.save_issue {
+              repo = buffer.repo,
+              base_title = base_title,
+              base_body = base_body,
+            }
+          end,
+        },
+      },
+    }
+  end)()
+end
+
 function M.create_issue(repo)
   local buffer = utils.get_current_buffer()
   if not repo then
-    repo = buffer.repo or utils.get_remote_name()
+    if buffer and buffer.repo then
+      repo = buffer.repo
+    else
+      repo = utils.get_remote_name()
+    end
   end
 
   if not repo then
@@ -1535,7 +1843,7 @@ function M.save_issue(opts)
     opts = {
       cb = gh.create_callback {
         success = function(output)
-          require("octo").create_buffer("issue", vim.json.decode(output), opts.repo, true)
+          require("octo").create_buffer("issue", vim.json.decode(output), opts.repo, true, nil)
           vim.fn.execute "normal! Gk"
           vim.fn.execute "startinsert"
         end,
@@ -1754,7 +2062,7 @@ function M.save_pr(opts)
           success = function(output)
             local pr = vim.json.decode(output)
             utils.info(string.format("#%d - `%s` created successfully", pr.number, pr.title))
-            require("octo").create_buffer("pull", pr, opts.repo, true)
+            require("octo").create_buffer("pull", pr, opts.repo, true, nil)
           end,
         },
       },
@@ -1858,6 +2166,7 @@ function M.pr_checks(buffer)
     local _, wbufnr = window.create_centered_float {
       header = "Checks",
       content = lines,
+      enter = true,
     }
 
     vim.api.nvim_buf_set_keymap(wbufnr, "n", "<CR>", "", {
@@ -1876,7 +2185,7 @@ function M.pr_checks(buffer)
         end
 
         local workflow = require "octo.workflow_runs"
-        workflow.render { id = run_id }
+        workflow.render { id = run_id, repo = buffer.repo }
       end,
     })
 
@@ -1887,6 +2196,20 @@ function M.pr_checks(buffer)
         local line_number = vim.api.nvim_win_get_cursor(0)[1]
         local url = data[line_number].link
         navigation.open_in_browser_raw(url)
+      end,
+    })
+
+    vim.api.nvim_buf_set_keymap(wbufnr, "n", mappings.copy_url.lhs, "", {
+      noremap = true,
+      silent = true,
+      callback = function()
+        local line_number = vim.api.nvim_win_get_cursor(0)[1]
+        local url = data[line_number].link
+        if not url or url == "" then
+          utils.error "No URL for this check"
+          return
+        end
+        utils.copy_url(url)
       end,
     })
 
@@ -2014,7 +2337,9 @@ function M.show_pr_diff()
         local wbufnr = vim.api.nvim_create_buf(true, true)
         vim.api.nvim_buf_set_lines(wbufnr, 0, -1, false, lines)
         vim.api.nvim_set_current_buf(wbufnr)
-        vim.api.nvim_buf_set_option(wbufnr, "filetype", "diff")
+        vim.bo[wbufnr].filetype = "diff"
+        vim.bo[wbufnr].modifiable = false
+        vim.api.nvim_buf_set_name(wbufnr, "DIFF: " .. buffer:pullRequest().title)
       end
     end,
   }
@@ -2114,37 +2439,37 @@ function M.reaction_action(reaction)
 
   -- add/delete reaction
   local query = graphql(action .. "_reaction_mutation", id, reaction)
-  gh.run {
-    args = { "api", "graphql", "-f", string.format("query=%s", query) },
-    cb = function(output, stderr)
-      if stderr and not utils.is_blank(stderr) then
-        utils.error(stderr)
-      elseif output then
-        local resp = vim.json.decode(output)
-        if action == "add" then
-          reaction_groups = resp.data.addReaction.subject.reactionGroups
-        elseif action == "remove" then
-          reaction_groups = resp.data.removeReaction.subject.reactionGroups
-        end
+  gh.api.graphql {
+    f = { query = query },
+    opts = {
+      cb = gh.create_callback {
+        success = function(output)
+          local resp = vim.json.decode(output)
+          if action == "add" then
+            reaction_groups = resp.data.addReaction.subject.reactionGroups
+          elseif action == "remove" then
+            reaction_groups = resp.data.removeReaction.subject.reactionGroups
+          end
 
-        buffer:update_reactions_at_cursor(reaction_groups, reaction_line)
-        if action == "remove" and utils.count_reactions(reaction_groups) == 0 then
-          -- delete lines
-          vim.api.nvim_buf_set_lines(buffer.bufnr, reaction_line - 1, reaction_line + 1, false, {})
-          vim.api.nvim_buf_clear_namespace(
-            buffer.bufnr,
-            constants.OCTO_REACTIONS_VT_NS,
-            reaction_line - 1,
-            reaction_line + 1
-          )
-        elseif action == "add" and insert_line then
-          -- add lines
-          vim.api.nvim_buf_set_lines(buffer.bufnr, reaction_line - 1, reaction_line - 1, false, { "", "" })
-        end
-        writers.write_reactions(buffer.bufnr, reaction_groups, reaction_line)
-        buffer:update_metadata()
-      end
-    end,
+          buffer:update_reactions_at_cursor(reaction_groups, reaction_line)
+          if action == "remove" and utils.count_reactions(reaction_groups) == 0 then
+            -- delete lines
+            vim.api.nvim_buf_set_lines(buffer.bufnr, reaction_line - 1, reaction_line + 1, false, {})
+            vim.api.nvim_buf_clear_namespace(
+              buffer.bufnr,
+              constants.OCTO_REACTIONS_VT_NS,
+              reaction_line - 1,
+              reaction_line + 1
+            )
+          elseif action == "add" and insert_line then
+            -- add lines
+            vim.api.nvim_buf_set_lines(buffer.bufnr, reaction_line - 1, reaction_line - 1, false, { "", "" })
+          end
+          writers.write_reactions(buffer.bufnr, reaction_groups, reaction_line)
+          buffer:update_metadata()
+        end,
+      },
+    },
   }
 end
 
@@ -2159,37 +2484,38 @@ function M.set_project_v2_card()
     local node = buffer:isIssue() and buffer:issue() or buffer:pullRequest()
     -- add new card
     local add_query = graphql("add_project_v2_item_mutation", node.id, project_id)
-    gh.run {
-      args = { "api", "graphql", "--paginate", "-f", string.format("query=%s", add_query) },
-      cb = function(add_output, add_stderr)
-        if add_stderr and not utils.is_blank(add_stderr) then
-          utils.error(add_stderr)
-        elseif add_output then
-          local resp = vim.json.decode(add_output)
-          local update_query = graphql(
-            "update_project_v2_item_mutation",
-            project_id,
-            resp.data.addProjectV2ItemById.item.id,
-            field_id,
-            value
-          )
-          gh.run {
-            args = { "api", "graphql", "--paginate", "-f", string.format("query=%s", update_query) },
-            cb = function(update_output, update_stderr)
-              if update_stderr and not utils.is_blank(update_stderr) then
-                utils.error(update_stderr)
-              elseif update_output then
-                -- TODO do update here
-                -- refresh issue/pr details
-                require("octo").load(buffer.repo, buffer.kind, buffer.number, function(obj)
-                  writers.write_details(buffer.bufnr, obj, true)
-                  node.projectCards = obj.projectCards
-                end)
-              end
-            end,
-          }
-        end
-      end,
+    gh.api.graphql {
+      f = { query = add_query },
+      opts = {
+        cb = gh.create_callback {
+          success = function(add_output)
+            local resp = vim.json.decode(add_output)
+            local update_query = graphql(
+              "update_project_v2_item_mutation",
+              project_id,
+              resp.data.addProjectV2ItemById.item.id,
+              field_id,
+              value
+            )
+            gh.api.graphql {
+              f = { query = update_query },
+              opts = {
+                cb = gh.create_callback {
+                  success = function()
+                    -- TODO do update here
+                    -- refresh issue/pr details
+                    local hostname = get_hostname_from_buffer()
+                    require("octo").load(buffer.repo, buffer.kind, buffer.number, hostname, function(obj)
+                      writers.write_details(buffer.bufnr, obj, true)
+                      node.projectCards = obj.projectCards
+                    end)
+                  end,
+                },
+              },
+            }
+          end,
+        },
+      },
     }
   end)
 end
@@ -2205,19 +2531,20 @@ function M.remove_project_v2_card()
     local node = buffer:isIssue() and buffer:issue() or buffer:pullRequest()
     -- delete card
     local query = graphql("delete_project_v2_item_mutation", project_id, item_id)
-    gh.run {
-      args = { "api", "graphql", "--paginate", "-f", string.format("query=%s", query) },
-      cb = function(output, stderr)
-        if stderr and not utils.is_blank(stderr) then
-          utils.error(stderr)
-        elseif output then
-          -- refresh issue/pr details
-          require("octo").load(buffer.repo, buffer.kind, buffer.number, function(obj)
-            node.projectCards = obj.projectCards
-            writers.write_details(buffer.bufnr, obj, true)
-          end)
-        end
-      end,
+    gh.api.graphql {
+      f = { query = query },
+      opts = {
+        cb = gh.create_callback {
+          success = function()
+            -- refresh issue/pr details
+            local hostname = get_hostname_from_buffer()
+            require("octo").load(buffer.repo, buffer.kind, buffer.number, hostname, function(obj)
+              node.projectCards = obj.projectCards
+              writers.write_details(buffer.bufnr, obj, true)
+            end)
+          end,
+        },
+      },
     }
   end)
 end
@@ -2312,7 +2639,8 @@ local function label_action(opts)
     end
 
     local function refresh_details()
-      require("octo").load(buffer.repo, buffer.kind, buffer.number, function(obj)
+      local hostname = get_hostname_from_buffer()
+      require("octo").load(buffer.repo, buffer.kind, buffer.number, hostname, function(obj)
         if buffer:isDiscussion() then
           writers.write_discussion_details(buffer.bufnr, obj)
         else
@@ -2399,7 +2727,8 @@ function M.add_user(subject, logins)
         cb = gh.create_callback {
           success = function()
             -- refresh issue/pr details
-            require("octo").load(buffer.repo, buffer.kind, buffer.number, function(obj)
+            local hostname = get_hostname_from_buffer()
+            require("octo").load(buffer.repo, buffer.kind, buffer.number, hostname, function(obj)
               writers.write_details(buffer.bufnr, obj, true)
               vim.cmd [[stopinsert]]
             end)
@@ -2408,7 +2737,7 @@ function M.add_user(subject, logins)
       },
     }
   end
-  if logins then
+  if logins and #logins > 0 then
     local user_ids = {} ---@type string[]
     for _, user in ipairs(logins) do
       local user_id = utils.get_user_id(user)
@@ -2450,18 +2779,19 @@ function M.remove_assignee(login)
 
   local function cb(user_id)
     local query = graphql("remove_assignees_mutation", iid, user_id)
-    gh.run {
-      args = { "api", "graphql", "--paginate", "-f", string.format("query=%s", query) },
-      cb = function(output, stderr)
-        if stderr and not utils.is_blank(stderr) then
-          utils.error(stderr)
-        elseif output then
-          -- refresh issue/pr details
-          require("octo").load(buffer.repo, buffer.kind, buffer.number, function(obj)
-            writers.write_details(buffer.bufnr, obj, true)
-          end)
-        end
-      end,
+    gh.api.graphql {
+      f = { query = query },
+      opts = {
+        cb = gh.create_callback {
+          success = function()
+            -- refresh issue/pr details
+            local hostname = get_hostname_from_buffer()
+            require("octo").load(buffer.repo, buffer.kind, buffer.number, hostname, function(obj)
+              writers.write_details(buffer.bufnr, obj, true)
+            end)
+          end,
+        },
+      },
     }
   end
   if login then
@@ -2495,7 +2825,8 @@ function M.remove_reviewer(login)
       opts = {
         cb = gh.create_callback {
           success = function()
-            require("octo").load(buffer.repo, buffer.kind, buffer.number, function(obj)
+            local hostname = get_hostname_from_buffer()
+            require("octo").load(buffer.repo, buffer.kind, buffer.number, hostname, function(obj)
               writers.write_details(buffer.bufnr, obj, true)
             end)
           end,
@@ -2560,6 +2891,8 @@ function M.search(...)
   local prompt = table.concat(args, " ")
 
   local type = "ISSUE"
+  local static = nil
+
   if string.match(prompt, "is:discussion") then
     type = "DISCUSSION"
     prompt = string.gsub(prompt, "is:discussion", "")
@@ -2568,7 +2901,15 @@ function M.search(...)
     prompt = string.gsub(prompt, "is:repository", "")
   end
 
-  picker.search { prompt = prompt, type = type }
+  if string.match(prompt, "static:true") then
+    static = true
+    prompt = string.gsub(prompt, "%s*static:true%s*", "")
+  elseif string.match(prompt, "static:false") then
+    static = false
+    prompt = string.gsub(prompt, "%s*static:false%s*", "")
+  end
+
+  picker.search { prompt = prompt, type = type, static = static }
 end
 
 --- @class PinIssueOpts
@@ -2609,5 +2950,37 @@ function M.pin_issue(opts)
     },
   }
 end
+
+M.delete_branch = context.within_pr(function(buffer)
+  local pr = buffer:pullRequest()
+  if utils.is_blank(pr.headRef) then
+    utils.error "Branch is already deleted"
+    return
+  end
+
+  if pr.state == "OPEN" then
+    local choice = vim.fn.confirm(
+      "The PR is still open. Are you sure you want to delete the branch and close the PR?",
+      "&Yes\n&No",
+      2
+    )
+    if choice ~= 1 then
+      utils.info "Aborting branch deletion"
+      return
+    end
+  end
+
+  gh.api.graphql {
+    query = mutations.delete_branch,
+    F = { branchRef = pr.headRef.id },
+    opts = {
+      cb = gh.create_callback {
+        success = function(_)
+          utils.info("Deleted branch " .. pr.headRefName)
+        end,
+      },
+    },
+  }
+end)
 
 return M

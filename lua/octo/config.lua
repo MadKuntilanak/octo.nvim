@@ -1,9 +1,9 @@
 local vim = vim
 local M = {}
 
----@alias OctoMappingsWindow "issue" | "pull_request" | "review_thread" | "submit_win" | "review_diff" | "file_panel" | "repo" | "notification" | "runs"
+---@alias OctoMappingsWindow "issue" | "pull_request" | "review_thread" | "submit_win" | "review_diff" | "file_panel" | "repo" | "notification" | "runs" | "discussion"
 ---@alias OctoMappingsList { [string]: table}
----@alias OctoPickers "telescope" | "fzf-lua" | "snacks"
+---@alias OctoPickers "telescope" | "fzf-lua" | "snacks" | "default"
 ---@alias OctoSplit "right" | "left"
 ---@alias OctoMergeMethod "squash" | "rebase" | "merge"
 
@@ -60,7 +60,7 @@ local M = {}
 ---@field use_emojis boolean -- Used by fzf-lua
 ---@field mappings OctoPickerMappings
 ---@field snacks OctoPickerConfigSnacks -- Snacks specific config
----@field fzflua OctoFzfluaWinopts -- fzf-lua specific config
+---@field search_static boolean -- Whether to use static search results (true) or dynamic search (false)
 
 ---@class OctoConfigColors
 ---@field white string
@@ -121,8 +121,17 @@ local M = {}
 ---@class OctoMissingScopeConfig
 ---@field projects_v2 boolean
 
+---@class OctoConfigPoll
+---@field enabled boolean
+---@field interval number
+---@field notify_on_refresh boolean
+---@field notify_on_change boolean
+
 ---@class OctoConfigDebug
 ---@field notify_missing_timeline_items boolean
+
+---@class OctoConfigSearch
+---@field completion_overrides table<string, string[]|fun(argLead: string, cmdLine: string): string[]>
 
 ---@class OctoConfig Octo configuration settings
 ---@field picker OctoPickers
@@ -136,6 +145,8 @@ local M = {}
 ---@field users string
 ---@field user_icon string
 ---@field ghost_icon string
+---@field copilot_icon string
+---@field dependabot_icon string
 ---@field comment_icon string
 ---@field outdated_icon string
 ---@field resolved_icon string
@@ -165,30 +176,39 @@ local M = {}
 ---@field mappings_disable_default boolean
 ---@field discussions OctoConfigDiscussions
 ---@field notifications OctoConfigNotifications
+---@field poll OctoConfigPoll
+---@field search OctoConfigSearch
 ---@field debug OctoConfigDebug
 
 --- Returns the default octo config values
 ---@return OctoConfig
 function M.get_default_values()
+  -- BEGIN_CONFIG
   return {
-    picker = "telescope",
+    picker = "telescope", -- or "fzf-lua" or "snacks" or "default"
     picker_config = {
-      use_emojis = false,
-      mappings = {
+      use_emojis = false, -- only used by "fzf-lua" picker for now
+      search_static = true, -- Whether to use static search results (true) or dynamic search (false)
+      mappings = { -- mappings for the pickers
         open_in_browser = { lhs = "<C-b>", desc = "open issue in browser" },
         copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
         copy_sha = { lhs = "<C-e>", desc = "copy commit SHA to system clipboard" },
         checkout_pr = { lhs = "<C-o>", desc = "checkout pull request" },
         merge_pr = { lhs = "<C-r>", desc = "merge pull request" },
       },
-      snacks = {
+      snacks = { -- snacks specific config
         -- Initialize actions as empty arrays
-        actions = {
-          issues = {},
-          pull_requests = {},
-          notifications = {},
-          issue_templates = {},
-          search = {},
+        actions = { -- custom actions for specific snacks pickers (array of tables)
+          issues = { -- actions for the issues picker
+            -- { name = "my_issue_action", fn = function(picker, item) print("Issue action:", vim.inspect(item)) end, lhs = "<leader>a", desc = "My custom issue action" },
+          },
+          pull_requests = { -- actions for the pull requests picker
+            -- { name = "my_pr_action", fn = function(picker, item) print("PR action:", vim.inspect(item)) end, lhs = "<leader>b", desc = "My custom PR action" },
+          },
+          notifications = {}, -- actions for the notifications picker
+          issue_templates = {}, -- actions for the issue templates picker
+          search = {}, -- actions for the search picker
+          -- ... add actions for other pickers as needed
           changed_files = {},
           commits = {},
           review_commits = {},
@@ -209,15 +229,17 @@ function M.get_default_values()
         },
       },
     },
-    default_remote = { "upstream", "origin" },
-    default_merge_method = "merge",
-    default_delete_branch = false,
-    ssh_aliases = {},
-    reaction_viewer_hint_icon = " ",
-    commands = {},
-    users = "search",
-    user_icon = " ",
-    ghost_icon = "󰊠 ",
+    default_remote = { "upstream", "origin" }, -- order to try remotes
+    default_merge_method = "merge", -- default merge method which should be used for both `Octo pr merge` and merging from picker, could be `merge`, `rebase` or `squash`
+    default_delete_branch = false, -- whether to delete branch when merging pull request with either `Octo pr merge` or from picker (can be overridden with `delete`/`nodelete` argument to `Octo pr merge`)
+    ssh_aliases = {}, -- SSH aliases. e.g. `ssh_aliases = {["github.com-work"] = "github.com"}`. The key part will be interpreted as an anchored Lua pattern.
+    reaction_viewer_hint_icon = " ", -- marker for user reactions
+    commands = {}, -- additional subcommands made available to `Octo` command
+    users = "search", -- Users for assignees or reviewers. Values: "search" | "mentionable" | "assignable"
+    user_icon = " ", -- user icon
+    ghost_icon = "󰊠 ", -- ghost icon
+    copilot_icon = " ", -- copilot icon
+    dependabot_icon = " ",
     comment_icon = "▎",
     outdated_icon = "󰅒 ",
     resolved_icon = " ",
@@ -226,7 +248,10 @@ function M.get_default_values()
     use_timeline_icons = true,
     timeline_icons = {
       auto_squash = "  ",
+      blocking = "  ",
       commit_push = "  ",
+      comment_deleted = "  ",
+      duplicate = "  ",
       force_push = "  ",
       draft = "  ",
       ready = " ",
@@ -234,50 +259,53 @@ function M.get_default_values()
       deployed = "  ",
       issue_type = "  ",
       label = "  ",
-      reference = " ",
+      reference = "  ",
       project = "  ",
       connected = "  ",
       subissue = "  ",
       cross_reference = "  ",
+      transferred = "  ",
       parent_issue = "  ",
       head_ref = "  ",
       pinned = "  ",
       milestone = "  ",
       renamed = "  ",
-      automatic_base_change_succeeded = "  ",
+      automatic_base_change_succeeded = "  ",
+      base_ref_changed = "  ",
       merged = { "  ", "OctoPurple" },
       closed = {
         closed = { "  ", "OctoRed" },
         completed = { "  ", "OctoPurple" },
-        not_planned = { "  ", "OctoGrey" },
-        duplicate = { "  ", "OctoGrey" },
+        not_planned = { "  ", "OctoWhite" },
+        duplicate = { "  ", "OctoWhite" },
       },
       reopened = { "  ", "OctoGreen" },
       assigned = "  ",
+      locked = "  ",
       review_requested = "  ",
     },
-    right_bubble_delimiter = "",
-    left_bubble_delimiter = "",
-    github_hostname = "",
-    use_local_fs = false,
-    enable_builtin = false,
-    snippet_context_lines = 4,
-    gh_cmd = "gh",
-    gh_env = {},
-    timeout = 5000,
-    default_to_projects_v2 = false,
+    right_bubble_delimiter = "", -- bubble delimiter
+    left_bubble_delimiter = "", -- bubble delimiter
+    github_hostname = "", -- GitHub Enterprise host
+    use_local_fs = false, -- use local files on right side of reviews
+    enable_builtin = false, -- shows a list of builtin actions when no action is provided
+    snippet_context_lines = 4, -- number of lines around commented lines
+    gh_cmd = "gh", -- Command to use when calling Github CLI
+    gh_env = {}, -- extra environment variables to pass on to GitHub CLI, can be a table or function returning a table
+    timeout = 5000, -- timeout for requests between the remote server
+    default_to_projects_v2 = false, -- use projects v2 for the `Octo card ...` command by default. Both legacy and v2 commands are available under `Octo cardlegacy ...` and `Octo cardv2 ...` respectively.
     suppress_missing_scope = {
       projects_v2 = false,
     },
     ui = {
-      use_signcolumn = false,
-      use_statuscolumn = true,
+      use_signcolumn = false, -- show "modified" marks on the sign column
+      use_statuscolumn = true, -- show "modified" marks on the status column
       use_foldtext = true,
     },
     issues = {
-      order_by = {
-        field = "CREATED_AT",
-        direction = "DESC",
+      order_by = { -- criteria to sort results of `Octo issue list`
+        field = "CREATED_AT", -- either COMMENTS, CREATED_AT or UPDATED_AT (https://docs.github.com/en/graphql/reference/enums#issueorderfield)
+        direction = "DESC", -- either DESC or ASC (https://docs.github.com/en/graphql/reference/enums#orderdirection)
       },
     },
     discussions = {
@@ -287,11 +315,11 @@ function M.get_default_values()
       },
     },
     notifications = {
-      current_repo_only = false,
+      current_repo_only = false, -- show notifications for current repo only
     },
     reviews = {
-      auto_show_threads = true,
-      focus = "right",
+      auto_show_threads = true, -- automatically show comment threads on cursor move
+      focus = "right", -- focus right buffer on diff open
     },
     runs = {
       icons = {
@@ -304,18 +332,18 @@ function M.get_default_values()
       },
     },
     pull_requests = {
-      order_by = {
-        field = "CREATED_AT",
-        direction = "DESC",
+      order_by = { -- criteria to sort the results of `Octo pr list`
+        field = "CREATED_AT", -- either COMMENTS, CREATED_AT or UPDATED_AT (https://docs.github.com/en/graphql/reference/enums#issueorderfield)
+        direction = "DESC", -- either DESC or ASC (https://docs.github.com/en/graphql/reference/enums#orderdirection)
       },
-      always_select_remote_on_create = false,
-      use_branch_name_as_title = false,
+      always_select_remote_on_create = false, -- always give prompt to select base remote repo when creating PRs
+      use_branch_name_as_title = false, -- sets branch name to be the name for the PR
     },
     file_panel = {
-      size = 10,
-      use_icons = true,
+      size = 10, -- changed files panel rows
+      use_icons = true, -- use web-devicons in file panel (if false, nvim-web-devicons does not need to be installed)
     },
-    colors = {
+    colors = { -- used for highlight groups (see Colors section below)
       white = "#ffffff",
       grey = "#2A354C",
       black = "#000000",
@@ -329,14 +357,17 @@ function M.get_default_values()
       dark_blue = "#0366d6",
       purple = "#6f42c1",
     },
-    mappings_disable_default = false,
+    mappings_disable_default = false, -- disable default mappings if true, but will still adapt user mappings
     mappings = {
       discussion = {
+        discussion_options = { lhs = "<CR>", desc = "show discussion options" },
         open_in_browser = { lhs = "<C-b>", desc = "open discussion in browser" },
         copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
         add_comment = { lhs = "<localleader>ca", desc = "add comment" },
         add_reply = { lhs = "<localleader>cr", desc = "add reply" },
         delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+        comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+        reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
         add_label = { lhs = "<localleader>la", desc = "add label" },
         remove_label = { lhs = "<localleader>ld", desc = "remove label" },
         next_comment = { lhs = "]c", desc = "go to next comment" },
@@ -376,6 +407,8 @@ function M.get_default_values()
         add_comment = { lhs = "<localleader>ca", desc = "add comment" },
         add_reply = { lhs = "<localleader>cr", desc = "add reply" },
         delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+        comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+        reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
         next_comment = { lhs = "]c", desc = "go to next comment" },
         prev_comment = { lhs = "[c", desc = "go to previous comment" },
         react_hooray = { lhs = "<localleader>rp", desc = "add/remove 🎉 reaction" },
@@ -414,6 +447,7 @@ function M.get_default_values()
         reopen_issue = { lhs = "<localleader>io", desc = "reopen PR" },
         list_issues = { lhs = "<localleader>il", desc = "list open issues on same repo" },
         reload = { lhs = "<C-r>", desc = "reload PR" },
+        approve_pr = { lhs = "<leader>qa", desc = "approve PR" },
         open_in_browser = { lhs = "<C-b>", desc = "open PR in browser" },
         copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
         copy_sha = { lhs = "<C-e>", desc = "copy commit SHA to system clipboard" },
@@ -427,6 +461,8 @@ function M.get_default_values()
         add_comment = { lhs = "<localleader>ca", desc = "add comment" },
         add_reply = { lhs = "<localleader>cr", desc = "add reply" },
         delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+        comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+        reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
         next_comment = { lhs = "]c", desc = "go to next comment" },
         prev_comment = { lhs = "[c", desc = "go to previous comment" },
         react_hooray = { lhs = "<localleader>rp", desc = "add/remove 🎉 reaction" },
@@ -448,6 +484,8 @@ function M.get_default_values()
         add_reply = { lhs = "<localleader>cr", desc = "add reply" },
         add_suggestion = { lhs = "<localleader>sa", desc = "add suggestion" },
         delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+        comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+        reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
         next_comment = { lhs = "]c", desc = "go to next comment" },
         prev_comment = { lhs = "[c", desc = "go to previous comment" },
         select_next_entry = { lhs = "]q", desc = "move to next changed file" },
@@ -469,10 +507,10 @@ function M.get_default_values()
         unresolve_thread = { lhs = "<localleader>rT", desc = "unresolve PR thread" },
       },
       submit_win = {
-        approve_review = { lhs = "<C-a>", desc = "approve review", mode = { "n", "i" } },
-        comment_review = { lhs = "<C-m>", desc = "comment review", mode = { "n", "i" } },
-        request_changes = { lhs = "<C-r>", desc = "request changes review", mode = { "n", "i" } },
-        close_review_tab = { lhs = "<C-c>", desc = "close review tab", mode = { "n", "i" } },
+        approve_review = { lhs = "<C-a>", desc = "approve review", mode = { "n" } },
+        comment_review = { lhs = "<C-m>", desc = "comment review", mode = { "n" } },
+        request_changes = { lhs = "<C-r>", desc = "request changes review", mode = { "n" } },
+        close_review_tab = { lhs = "<C-c>", desc = "close review tab", mode = { "n" } },
       },
       review_diff = {
         submit_review = { lhs = "<localleader>vs", desc = "submit review" },
@@ -530,10 +568,20 @@ function M.get_default_values()
         open_in_browser = { lhs = "<C-b>", desc = "open release in browser" },
       },
     },
+    poll = {
+      enabled = false, -- opt-in polling for remote changes
+      interval = 10000, -- polling interval in milliseconds (default: 10s)
+      notify_on_refresh = true, -- notify when a buffer is auto-refreshed
+      notify_on_change = true, -- notify when remote changed but buffer has local edits
+    },
+    search = {
+      completion_overrides = {}, -- key is a qualifier, value is an array table or a function returning a table
+    },
     debug = {
       notify_missing_timeline_items = false,
     },
   }
+  -- END_CONFIG
 end
 
 M.values = M.get_default_values()
@@ -599,13 +647,14 @@ function M.validate_config()
   end
 
   local function validate_pickers()
-    validate_string_enum(config.picker, "picker", { "telescope", "fzf-lua", "snacks" })
+    validate_string_enum(config.picker, "picker", { "telescope", "fzf-lua", "snacks", "default" })
 
     if not validate_type(config.picker_config, "picker_config", "table") then
       return
     end
 
     validate_type(config.picker_config.use_emojis, "picker_config.use_emojis", "boolean")
+    validate_type(config.picker_config.search_static, "picker_config.search_static", "boolean")
     if validate_type(config.picker_config.mappings, "picker_config.mappings", "table") then
       ---@diagnostic disable-next-line: no-unknown
       for action, map in pairs(config.picker_config.mappings) do
@@ -701,6 +750,16 @@ function M.validate_config()
     end
   end
 
+  local function validate_poll()
+    if not validate_type(config.poll, "poll", "table") then
+      return
+    end
+    validate_type(config.poll.enabled, "poll.enabled", "boolean")
+    validate_type(config.poll.interval, "poll.interval", "number")
+    validate_type(config.poll.notify_on_refresh, "poll.notify_on_refresh", "boolean")
+    validate_type(config.poll.notify_on_change, "poll.notify_on_change", "boolean")
+  end
+
   local function validate_debug()
     if not validate_type(config.debug, "debug", "table") then
       return
@@ -714,6 +773,13 @@ function M.validate_config()
     validate_type(config.snippet_context_lines, "snippet_context_lines", "number")
     validate_type(config.timeout, "timeout", "number")
     validate_type(config.default_to_projects_v2, "default_to_projects_v2", "boolean")
+    if validate_type(config.search, "search", "table") then
+      if validate_type(config.search.completion_overrides, "search.completion_overrides", "table") then
+        for name, value in pairs(config.search.completion_overrides) do
+          validate_type(value, "search.completion_overrides." .. name, { "table", "function" })
+        end
+      end
+    end
     if validate_type(config.suppress_missing_scope, "suppress_missing_scope", "table") then
       validate_type(config.suppress_missing_scope.projects_v2, "suppress_missing_scope.projects_v2", "boolean")
     end
@@ -723,6 +789,7 @@ function M.validate_config()
     validate_string_enum(config.users, "users", { "search", "mentionable", "assignable" })
     validate_type(config.user_icon, "user_icon", "string")
     validate_type(config.ghost_icon, "ghost_icon", "string")
+    validate_type(config.copilot_icon, "copilot_icon", "string")
     validate_type(config.comment_icon, "comment_icon", "string")
     validate_type(config.outdated_icon, "outdated_icon", "string")
     validate_type(config.resolved_icon, "resolved_icon", "string")
@@ -762,6 +829,7 @@ function M.validate_config()
     validate_aliases()
     validate_pickers()
     validate_mappings()
+    validate_poll()
     validate_debug()
   end
 

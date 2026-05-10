@@ -74,6 +74,39 @@ Octo search assignee:pwntester is:pr
 Octo search is:discussion repo:pwntester/octo.nvim category:"Show and Tell"
 ```
 
+You can pass GitHub URLs directly to the `Octo` command, including GitHub Enterprise URLs:
+
+```vim
+" GitHub.com URLs
+Octo https://github.com/pwntester/octo.nvim/issues/12
+Octo https://github.com/pwntester/octo.nvim/pull/123
+
+" GitHub Enterprise URLs (hostname is automatically detected)
+Octo https://ghe.example.com/owner/repo/issues/456
+Octo https://ghe.example.com/owner/repo/pull/789
+```
+
+You can also use `octo://` URLs to open issues and PRs directly:
+
+```vim
+" Open from the default GitHub instance (github.com or configured github_hostname)
+:e octo://owner/repo/issue/123
+:e octo://owner/repo/pull/456
+
+" Open from a specific GitHub Enterprise instance
+:e octo://ghe.example.com/owner/repo/issue/123
+:e octo://ghe.example.com/owner/repo/pull/456
+
+" Both singular and plural forms are supported
+:e octo://owner/repo/issues/123
+:e octo://owner/repo/pulls/456
+```
+
+The `octo://` URL format is especially useful for:
+- Opening issues/PRs from notes or wiki links without needing to be in the repository directory
+- Working with multiple GitHub instances (e.g., GitHub.com and GitHub Enterprise) without setting `GH_HOST` globally
+- Creating quick links in your workflow that work regardless of your current directory
+
 From any octo buffer, press `<CR>` in normal mode to see common actions.
 
 ## 🎯 Requirements
@@ -86,11 +119,14 @@ From any octo buffer, press `<CR>` in normal mode to see common actions.
   - If you'd like to actually modify projects you can instead add the `project`
     scope to your token instead.
 - Install [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
-- Install one of:
+- Install one or none of:
   - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim)
   - [fzf-lua](https://github.com/ibhagwan/fzf-lua)
   - [snacks.nvim](https://github.com/folke/snacks.nvim)
+  - default picker uses `vim.ui.select`
 - Install [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons)
+
+After installation, run `:checkhealth octo` to verify your setup.
 
 ## 📦 Installation
 
@@ -101,8 +137,8 @@ For a basic installation using [`lazy.nvim`](https://lazy.folke.io/), try:
   "pwntester/octo.nvim",
   cmd = "Octo",
   opts = {
-    -- or "fzf-lua" or "snacks"
-    picker = "telescope",  
+    -- or "fzf-lua" or "snacks" or "default"
+    picker = "telescope",
     -- bare Octo command opens picker of commands
     enable_builtin = true,
   },
@@ -150,94 +186,130 @@ For a basic installation using [`lazy.nvim`](https://lazy.folke.io/), try:
 
 Below is the full *default* configuration for `octo.nvim`.
 
+<!-- BEGIN_CONFIG -->
 ```lua
 require"octo".setup {
-  use_local_fs = false,                    -- use local files on right side of reviews
-  enable_builtin = false,                  -- shows a list of builtin actions when no action is provided
-  default_remote = {"upstream", "origin"}, -- order to try remotes
-  default_merge_method = "merge",         -- default merge method which should be used for both `Octo pr merge` and merging from picker, could be `merge`, `rebase` or `squash`
-  default_delete_branch = false,           -- whether to delete branch when merging pull request with either `Octo pr merge` or from picker (can be overridden with `delete`/`nodelete` argument to `Octo pr merge`)
-  ssh_aliases = {},                        -- SSH aliases. e.g. `ssh_aliases = {["github.com-work"] = "github.com"}`. The key part will be interpreted as an anchored Lua pattern.
-  picker = "telescope",                    -- or "fzf-lua" or "snacks"
+  picker = "telescope", -- or "fzf-lua" or "snacks" or "default"
   picker_config = {
-    use_emojis = false,                    -- only used by "fzf-lua" picker for now
-    mappings = {                           -- mappings for the pickers
+    use_emojis = false, -- only used by "fzf-lua" picker for now
+    search_static = true, -- Whether to use static search results (true) or dynamic search (false)
+    mappings = { -- mappings for the pickers
       open_in_browser = { lhs = "<C-b>", desc = "open issue in browser" },
       copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
       copy_sha = { lhs = "<C-e>", desc = "copy commit SHA to system clipboard" },
       checkout_pr = { lhs = "<C-o>", desc = "checkout pull request" },
       merge_pr = { lhs = "<C-r>", desc = "merge pull request" },
     },
-    snacks = {                                -- snacks specific config
-      actions = {                             -- custom actions for specific snacks pickers (array of tables)
-        issues = {                            -- actions for the issues picker
+    snacks = { -- snacks specific config
+      -- Initialize actions as empty arrays
+      actions = { -- custom actions for specific snacks pickers (array of tables)
+        issues = { -- actions for the issues picker
           -- { name = "my_issue_action", fn = function(picker, item) print("Issue action:", vim.inspect(item)) end, lhs = "<leader>a", desc = "My custom issue action" },
         },
-        pull_requests = {                     -- actions for the pull requests picker
+        pull_requests = { -- actions for the pull requests picker
           -- { name = "my_pr_action", fn = function(picker, item) print("PR action:", vim.inspect(item)) end, lhs = "<leader>b", desc = "My custom PR action" },
         },
-        notifications = {},                   -- actions for the notifications picker
-        issue_templates = {},                 -- actions for the issue templates picker
-        search = {},                          -- actions for the search picker
+        notifications = {}, -- actions for the notifications picker
+        issue_templates = {}, -- actions for the issue templates picker
+        search = {}, -- actions for the search picker
         -- ... add actions for other pickers as needed
+        changed_files = {},
+        commits = {},
+        review_commits = {},
       },
     },
   },
-  comment_icon = "▎",                      -- comment marker
-  outdated_icon = "󰅒 ",                    -- outdated indicator
-  resolved_icon = " ",                    -- resolved indicator
-  reaction_viewer_hint_icon = " ",        -- marker for user reactions
-  commands = {},                           -- additional subcommands made available to `Octo` command
-  users = "search",                        -- Users for assignees or reviewers. Values: "search" | "mentionable" | "assignable"
-  user_icon = " ",                        -- user icon
-  ghost_icon = "󰊠 ",                       -- ghost icon
-  timeline_marker = " ",                  -- timeline marker
-  timeline_indent = 2,                   -- timeline indentation
-  use_timeline_icons = true,               -- toggle timeline icons
-  timeline_icons = {                       -- the default icons based on timelineItems
+  default_remote = { "upstream", "origin" }, -- order to try remotes
+  default_merge_method = "merge", -- default merge method which should be used for both `Octo pr merge` and merging from picker, could be `merge`, `rebase` or `squash`
+  default_delete_branch = false, -- whether to delete branch when merging pull request with either `Octo pr merge` or from picker (can be overridden with `delete`/`nodelete` argument to `Octo pr merge`)
+  ssh_aliases = {}, -- SSH aliases. e.g. `ssh_aliases = {["github.com-work"] = "github.com"}`. The key part will be interpreted as an anchored Lua pattern.
+  reaction_viewer_hint_icon = " ", -- marker for user reactions
+  commands = {}, -- additional subcommands made available to `Octo` command
+  users = "search", -- Users for assignees or reviewers. Values: "search" | "mentionable" | "assignable"
+  user_icon = " ", -- user icon
+  ghost_icon = "󰊠 ", -- ghost icon
+  copilot_icon = " ", -- copilot icon
+  dependabot_icon = " ",
+  comment_icon = "▎",
+  outdated_icon = "󰅒 ",
+  resolved_icon = " ",
+  timeline_marker = " ",
+  timeline_indent = 2,
+  use_timeline_icons = true,
+  timeline_icons = {
+    auto_squash = "  ",
+    blocking = "  ",
+    commit_push = "  ",
+    comment_deleted = "  ",
+    duplicate = "  ",
+    force_push = "  ",
+    draft = "  ",
+    ready = " ",
     commit = "  ",
+    deployed = "  ",
+    issue_type = "  ",
     label = "  ",
-    reference = " ",
+    reference = "  ",
+    project = "  ",
     connected = "  ",
     subissue = "  ",
     cross_reference = "  ",
+    transferred = "  ",
     parent_issue = "  ",
+    head_ref = "  ",
     pinned = "  ",
     milestone = "  ",
     renamed = "  ",
+    automatic_base_change_succeeded = "  ",
+    base_ref_changed = "  ",
     merged = { "  ", "OctoPurple" },
     closed = {
       closed = { "  ", "OctoRed" },
       completed = { "  ", "OctoPurple" },
-      not_planned = { "  ", "OctoGrey" },
-      duplicate = { "  ", "OctoGrey" },
+      not_planned = { "  ", "OctoWhite" },
+      duplicate = { "  ", "OctoWhite" },
     },
     reopened = { "  ", "OctoGreen" },
     assigned = "  ",
+    locked = "  ",
     review_requested = "  ",
   },
-  right_bubble_delimiter = "",            -- bubble delimiter
-  left_bubble_delimiter = "",             -- bubble delimiter
-  github_hostname = "",                    -- GitHub Enterprise host
-  snippet_context_lines = 4,               -- number or lines around commented lines
-  gh_cmd = "gh",                           -- Command to use when calling Github CLI
-  gh_env = {},                             -- extra environment variables to pass on to GitHub CLI, can be a table or function returning a table
-  timeout = 5000,                          -- timeout for requests between the remote server
-  default_to_projects_v2 = false,          -- use projects v2 for the `Octo card ...` command by default. Both legacy and v2 commands are available under `Octo cardlegacy ...` and `Octo cardv2 ...` respectively.
-                                           -- Also disable sending v2 events into Github API.
+  right_bubble_delimiter = "", -- bubble delimiter
+  left_bubble_delimiter = "", -- bubble delimiter
+  github_hostname = "", -- GitHub Enterprise host
+  use_local_fs = false, -- use local files on right side of reviews
+  enable_builtin = false, -- shows a list of builtin actions when no action is provided
+  snippet_context_lines = 4, -- number of lines around commented lines
+  gh_cmd = "gh", -- Command to use when calling Github CLI
+  gh_env = {}, -- extra environment variables to pass on to GitHub CLI, can be a table or function returning a table
+  timeout = 5000, -- timeout for requests between the remote server
+  default_to_projects_v2 = false, -- use projects v2 for the `Octo card ...` command by default. Both legacy and v2 commands are available under `Octo cardlegacy ...` and `Octo cardv2 ...` respectively.
+  suppress_missing_scope = {
+    projects_v2 = false,
+  },
   ui = {
-    use_signcolumn = false,                -- show "modified" marks on the sign column
-    use_signstatus = true,                 -- show "modified" marks on the status column
+    use_signcolumn = false, -- show "modified" marks on the sign column
+    use_statuscolumn = true, -- show "modified" marks on the status column
+    use_foldtext = true,
   },
   issues = {
-    order_by = {                           -- criteria to sort results of `Octo issue list`
-      field = "CREATED_AT",                -- either COMMENTS, CREATED_AT or UPDATED_AT (https://docs.github.com/en/graphql/reference/enums#issueorderfield)
-      direction = "DESC"                   -- either DESC or ASC (https://docs.github.com/en/graphql/reference/enums#orderdirection)
-    }
+    order_by = { -- criteria to sort results of `Octo issue list`
+      field = "CREATED_AT", -- either COMMENTS, CREATED_AT or UPDATED_AT (https://docs.github.com/en/graphql/reference/enums#issueorderfield)
+      direction = "DESC", -- either DESC or ASC (https://docs.github.com/en/graphql/reference/enums#orderdirection)
+    },
+  },
+  discussions = {
+    order_by = {
+      field = "CREATED_AT",
+      direction = "DESC",
+    },
+  },
+  notifications = {
+    current_repo_only = false, -- show notifications for current repo only
   },
   reviews = {
-    auto_show_threads = true,              -- automatically show comment threads on cursor move
-    focus             = "right",           -- focus right buffer on diff open
+    auto_show_threads = true, -- automatically show comment threads on cursor move
+    focus = "right", -- focus right buffer on diff open
   },
   runs = {
     icons = {
@@ -250,21 +322,18 @@ require"octo".setup {
     },
   },
   pull_requests = {
-    order_by = {                            -- criteria to sort the results of `Octo pr list`
-      field = "CREATED_AT",                 -- either COMMENTS, CREATED_AT or UPDATED_AT (https://docs.github.com/en/graphql/reference/enums#issueorderfield)
-      direction = "DESC"                    -- either DESC or ASC (https://docs.github.com/en/graphql/reference/enums#orderdirection)
+    order_by = { -- criteria to sort the results of `Octo pr list`
+      field = "CREATED_AT", -- either COMMENTS, CREATED_AT or UPDATED_AT (https://docs.github.com/en/graphql/reference/enums#issueorderfield)
+      direction = "DESC", -- either DESC or ASC (https://docs.github.com/en/graphql/reference/enums#orderdirection)
     },
     always_select_remote_on_create = false, -- always give prompt to select base remote repo when creating PRs
-    use_branch_name_as_title = false        -- sets branch name to be the name for the PR
-  },
-  notifications = {
-    current_repo_only = false,             -- show notifications for current repo only
+    use_branch_name_as_title = false, -- sets branch name to be the name for the PR
   },
   file_panel = {
-    size = 10,                             -- changed files panel rows
-    use_icons = true                       -- use web-devicons in file panel (if false, nvim-web-devicons does not need to be installed)
+    size = 10, -- changed files panel rows
+    use_icons = true, -- use web-devicons in file panel (if false, nvim-web-devicons does not need to be installed)
   },
-  colors = {                               -- used for highlight groups (see Colors section below)
+  colors = { -- used for highlight groups (see Colors section below)
     white = "#ffffff",
     grey = "#2A354C",
     black = "#000000",
@@ -278,14 +347,17 @@ require"octo".setup {
     dark_blue = "#0366d6",
     purple = "#6f42c1",
   },
-  mappings_disable_default = false,        -- disable default mappings if true, but will still adapt user mappings
+  mappings_disable_default = false, -- disable default mappings if true, but will still adapt user mappings
   mappings = {
     discussion = {
+      discussion_options = { lhs = "<CR>", desc = "show discussion options" },
       open_in_browser = { lhs = "<C-b>", desc = "open discussion in browser" },
       copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
       add_comment = { lhs = "<localleader>ca", desc = "add comment" },
       add_reply = { lhs = "<localleader>cr", desc = "add reply" },
       delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+      comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+      reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
       add_label = { lhs = "<localleader>la", desc = "add label" },
       remove_label = { lhs = "<localleader>ld", desc = "remove label" },
       next_comment = { lhs = "]c", desc = "go to next comment" },
@@ -325,6 +397,8 @@ require"octo".setup {
       add_comment = { lhs = "<localleader>ca", desc = "add comment" },
       add_reply = { lhs = "<localleader>cr", desc = "add reply" },
       delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+      comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+      reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
       next_comment = { lhs = "]c", desc = "go to next comment" },
       prev_comment = { lhs = "[c", desc = "go to previous comment" },
       react_hooray = { lhs = "<localleader>rp", desc = "add/remove 🎉 reaction" },
@@ -339,12 +413,21 @@ require"octo".setup {
     pull_request = {
       pr_options = { lhs = "<CR>", desc = "show PR options" },
       checkout_pr = { lhs = "<localleader>po", desc = "checkout PR" },
-      merge_pr = { lhs = "<localleader>pm", desc = "merge PR" },
+      merge_pr = { lhs = "<localleader>pm", desc = "merge commit PR" },
       squash_and_merge_pr = { lhs = "<localleader>psm", desc = "squash and merge PR" },
       rebase_and_merge_pr = { lhs = "<localleader>prm", desc = "rebase and merge PR" },
-      merge_pr_queue = { lhs = "<localleader>pq", desc = "merge commit PR and add to merge queue (Merge queue must be enabled in the repo)" },
-      squash_and_merge_queue = { lhs = "<localleader>psq", desc = "squash and add to merge queue (Merge queue must be enabled in the repo)" },
-      rebase_and_merge_queue = { lhs = "<localleader>prq", desc = "rebase and add to merge queue (Merge queue must be enabled in the repo)" },
+      merge_pr_queue = {
+        lhs = "<localleader>pq",
+        desc = "merge commit PR and add to merge queue (Merge queue must be enabled in the repo)",
+      },
+      squash_and_merge_queue = {
+        lhs = "<localleader>psq",
+        desc = "squash and add to merge queue (Merge queue must be enabled in the repo)",
+      },
+      rebase_and_merge_queue = {
+        lhs = "<localleader>prq",
+        desc = "rebase and add to merge queue (Merge queue must be enabled in the repo)",
+      },
       list_commits = { lhs = "<localleader>pc", desc = "list PR commits" },
       list_changed_files = { lhs = "<localleader>pf", desc = "list PR changed files" },
       show_pr_diff = { lhs = "<localleader>pd", desc = "show PR diff" },
@@ -354,8 +437,10 @@ require"octo".setup {
       reopen_issue = { lhs = "<localleader>io", desc = "reopen PR" },
       list_issues = { lhs = "<localleader>il", desc = "list open issues on same repo" },
       reload = { lhs = "<C-r>", desc = "reload PR" },
+      approve_pr = { lhs = "<leader>qa", desc = "approve PR" },
       open_in_browser = { lhs = "<C-b>", desc = "open PR in browser" },
       copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
+      copy_sha = { lhs = "<C-e>", desc = "copy commit SHA to system clipboard" },
       goto_file = { lhs = "gf", desc = "go to file" },
       add_assignee = { lhs = "<localleader>aa", desc = "add assignee" },
       remove_assignee = { lhs = "<localleader>ad", desc = "remove assignee" },
@@ -366,6 +451,8 @@ require"octo".setup {
       add_comment = { lhs = "<localleader>ca", desc = "add comment" },
       add_reply = { lhs = "<localleader>cr", desc = "add reply" },
       delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+      comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+      reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
       next_comment = { lhs = "]c", desc = "go to next comment" },
       prev_comment = { lhs = "[c", desc = "go to previous comment" },
       react_hooray = { lhs = "<localleader>rp", desc = "add/remove 🎉 reaction" },
@@ -387,14 +474,16 @@ require"octo".setup {
       add_reply = { lhs = "<localleader>cr", desc = "add reply" },
       add_suggestion = { lhs = "<localleader>sa", desc = "add suggestion" },
       delete_comment = { lhs = "<localleader>cd", desc = "delete comment" },
+      comment_edits = { lhs = "<localleader>ce", desc = "show comment edit history" },
+      reference_in_new_issue = { lhs = "<localleader>ri", desc = "reference comment in new issue" },
       next_comment = { lhs = "]c", desc = "go to next comment" },
       prev_comment = { lhs = "[c", desc = "go to previous comment" },
       select_next_entry = { lhs = "]q", desc = "move to next changed file" },
       select_prev_entry = { lhs = "[q", desc = "move to previous changed file" },
       select_first_entry = { lhs = "[Q", desc = "move to first changed file" },
       select_last_entry = { lhs = "]Q", desc = "move to last changed file" },
-      select_next_unviewed_entry = { lhs = "]u", desc = "move to next unviewed changed file" },
-      select_prev_unviewed_entry = { lhs = "[u", desc = "move to previous unviewed changed file" },
+      select_next_unviewed_entry = { lhs = "]u", desc = "move to next unviewed file" },
+      select_prev_unviewed_entry = { lhs = "[u", desc = "move to previous unviewed file" },
       close_review_tab = { lhs = "<C-c>", desc = "close review tab" },
       react_hooray = { lhs = "<localleader>rp", desc = "add/remove 🎉 reaction" },
       react_heart = { lhs = "<localleader>rh", desc = "add/remove ❤️ reaction" },
@@ -408,10 +497,10 @@ require"octo".setup {
       unresolve_thread = { lhs = "<localleader>rT", desc = "unresolve PR thread" },
     },
     submit_win = {
-      approve_review = { lhs = "<C-a>", desc = "approve review", mode = { "n", "i" } },
-      comment_review = { lhs = "<C-m>", desc = "comment review", mode = { "n", "i" } },
-      request_changes = { lhs = "<C-r>", desc = "request changes review", mode = { "n", "i" } },
-      close_review_tab = { lhs = "<C-c>", desc = "close review tab", mode = { "n", "i" } },
+      approve_review = { lhs = "<C-a>", desc = "approve review", mode = { "n" } },
+      comment_review = { lhs = "<C-m>", desc = "comment review", mode = { "n" } },
+      request_changes = { lhs = "<C-r>", desc = "request changes review", mode = { "n" } },
+      close_review_tab = { lhs = "<C-c>", desc = "close review tab", mode = { "n" } },
     },
     review_diff = {
       submit_review = { lhs = "<localleader>vs", desc = "submit review" },
@@ -426,11 +515,13 @@ require"octo".setup {
       select_prev_entry = { lhs = "[q", desc = "move to previous changed file" },
       select_first_entry = { lhs = "[Q", desc = "move to first changed file" },
       select_last_entry = { lhs = "]Q", desc = "move to last changed file" },
-      select_next_unviewed_entry = { lhs = "]u", desc = "move to next unviewed changed file" },
-      select_prev_unviewed_entry = { lhs = "[u", desc = "move to previous unviewed changed file" },
+      select_next_unviewed_entry = { lhs = "]u", desc = "move to next unviewed file" },
+      select_prev_unviewed_entry = { lhs = "[u", desc = "move to previous unviewed file" },
       close_review_tab = { lhs = "<C-c>", desc = "close review tab" },
       toggle_viewed = { lhs = "<localleader><space>", desc = "toggle viewer viewed state" },
       goto_file = { lhs = "gf", desc = "go to file" },
+      copy_sha = { lhs = "<C-e>", desc = "copy commit SHA to system clipboard" },
+      review_commits = { lhs = "<localleader>C", desc = "review PR commits" },
     },
     file_panel = {
       submit_review = { lhs = "<localleader>vs", desc = "submit review" },
@@ -445,10 +536,11 @@ require"octo".setup {
       select_prev_entry = { lhs = "[q", desc = "move to previous changed file" },
       select_first_entry = { lhs = "[Q", desc = "move to first changed file" },
       select_last_entry = { lhs = "]Q", desc = "move to last changed file" },
-      select_next_unviewed_entry = { lhs = "]u", desc = "move to next unviewed changed file" },
-      select_prev_unviewed_entry = { lhs = "[u", desc = "move to previous unviewed changed file" },
+      select_next_unviewed_entry = { lhs = "]u", desc = "move to next unviewed file" },
+      select_prev_unviewed_entry = { lhs = "[u", desc = "move to previous unviewed file" },
       close_review_tab = { lhs = "<C-c>", desc = "close review tab" },
       toggle_viewed = { lhs = "<localleader><space>", desc = "toggle viewer viewed state" },
+      review_commits = { lhs = "<localleader>C", desc = "review PR commits" },
     },
     notification = {
       read = { lhs = "<localleader>nr", desc = "mark notification as read" },
@@ -466,8 +558,21 @@ require"octo".setup {
       open_in_browser = { lhs = "<C-b>", desc = "open release in browser" },
     },
   },
+  poll = {
+    enabled = false, -- opt-in polling for remote changes
+    interval = 10000, -- polling interval in milliseconds (default: 10s)
+    notify_on_refresh = true, -- notify when a buffer is auto-refreshed
+    notify_on_change = true, -- notify when remote changed but buffer has local edits
+  },
+  search = {
+    completion_overrides = {}, -- key is a qualifier, value is an array table or a function returning a table
+  },
+  debug = {
+    notify_missing_timeline_items = false,
+  },
 }
 ```
+<!-- END_CONFIG -->
 
 ## 🤖 Commands
 
@@ -480,17 +585,18 @@ If no command is passed, the argument to `Octo` is treated as a URL from where a
 |          | reopen                                            | Reopen the current issue                                                                                                                               |
 |          | create [repo]                                     | Creates a new issue in the current or specified repo                                                                                                   |
 |          | develop                                           | Create and checkout a new branch for an issue in the current repo                                                                                      |
-|          | edit [repo] <number>                              | Edit issue `<number>` in current or specified repo                                                                                                     |
+|          | edit <number> [repo]                              | Edit issue `<number>` in current or specified repo                                                                                                     |
 |          | list [repo] [key=value] (1)                       | List all issues satisfying given filter                                                                                                                |
 |          | search                                            | Live issue search                                                                                                                                      |
 |          | reload                                            | Reload issue. Same as doing `e!`                                                                                                                       |
 |          | browser                                           | Open current issue in the browser                                                                                                                      |
 |          | url                                               | Copies the URL of the current issue to the system clipboard                                                                                            |
+|          | subscription                                      | Change subscription state (subscribe, unsubscribe, or ignore)                                                                                          |
 |          | pin                                               | Pin the current issue                                                                                                                                  |
 |          | unpin                                             | Unpin the current issue                                                                                                                                |
 | pr       | list [repo] [key=value] (2)                       | List all PRs satisfying given filter                                                                                                                   |
 |          | search                                            | Live issue search                                                                                                                                      |
-|          | edit [repo] <number>                              | Edit PR `<number>` in current or specified repo                                                                                                        |
+|          | edit <number> [repo]                             | Edit PR `<number>` in current or specified repo                                                                                                        |
 |          | reopen                                            | Reopen the current PR                                                                                                                                  |
 |          | create                                            | Creates a new PR for the current branch                                                                                                                |
 |          | close                                             | Close the current PR                                                                                                                                   |
@@ -505,19 +611,21 @@ If no command is passed, the argument to `Octo` is treated as a URL from where a
 |          | reload                                            | Reload PR. Same as doing `e!`                                                                                                                          |
 |          | browser                                           | Open current PR in the browser                                                                                                                         |
 |          | url                                               | Copies the URL of the current PR to the system clipboard                                                                                               |
+|          | subscription                                      | Change subscription state (subscribe, unsubscribe, or ignore)                                                                                          |
 |          | sha                                               | Copies the head commit SHA of the current PR to the system clipboard                                                                                   |
 |          | runs                                              | List all workflow runs for the PR                                                                                                                      |
 | repo     | list (3)                                          | List repos user owns, contributes or belong to                                                                                                         |
 |          | fork                                              | Fork repo                                                                                                                                              |
 |          | browser                                           | Open current repo in the browser                                                                                                                       |
 |          | url                                               | Copies the URL of the current repo to the system clipboard                                                                                             |
+|          | subscription                                      | Change subscription state (subscribe, unsubscribe, or ignore)                                                                                          |
 |          | view                                              | Open a repo by path ({organization}/{name})                                                                                                            |
 | gist     | list [repo] [key=value] (4)                       | List user gists                                                                                                                                        |
 | comment  | add                                               | Add a new comment                                                                                                                                      |
 |          | suggest                                            | Add a new suggestion                                                                                                                                  |
 |          | delete                                            | Delete a comment                                                                                                                                       |
 |          | url                                            | Copies the URL of the current comment to the system clipboard                                                                                          |
-|          | reply                                            | Add comment as a reply to the current comment | 
+|          | reply                                            | Add comment as a reply to the current comment |
  | thread   | resolve                                           | Mark a review thread as resolved                                                                                                                       |
 |          | unresolve                                         | Mark a review thread as unresolved                                                                                                                     |
 | label    | add [label]                                       | Add a label from available label menu                                                                                                                  |
@@ -557,6 +665,7 @@ If no command is passed, the argument to `Octo` is treated as a URL from where a
 | run      | list                                              | List workflow runs                                                                                                                                     |
 | notification | list                                          | Shows current unread notifications |
 | discussion   | list [repo]                                          | List open discussions for current or specified repo |
+|    | edit <number> [repo] | Edit discussion in current or specified repo |
 |    | browser | Open the current discussion in the browser |
 |    | create [repo]                                          | Create discussion for current or specified repo |
 |    | reload                                                 | Reload the current discussion buffer |
@@ -565,11 +674,19 @@ If no command is passed, the argument to `Octo` is treated as a URL from where a
 |    | unmark                                                 | Unmark the discussion comment as answer |
 |    | reopen                                                 | Reopen the current discussion |
 |    | search                                                 | Search discussions |
+|    | subscription                                      | Change subscription state (subscribe, unsubscribe, or ignore) |
 |    | category                                                 | Change category of discussion |
 | parent   | add                                           | Add a parent issue to current issue |
 |          | remove                                           | Remove the parent issue to current issue |
 |          | edit                                           | Edit the parent issue to current issue |
+| child   | add                                           | Add a child issue to current issue |
 | release  | notes                                           | Generate release notes in current buffer |
+|   | list [repo]                                           | List release notes for current or specified repo |
+| poll     | start                                             | Start polling tracked buffers for remote changes |
+|          | stop                                              | Stop polling |
+|          | toggle                                            | Toggle polling on/off |
+|          | status                                            | Show polling status and tracked buffers |
+|          | apply                                             | Force-reload a dirty buffer with pending remote changes |
 
 0. `[repo]`: If repo is not provided, it will be derived from `<cwd>/.git/config`.
 
@@ -722,9 +839,14 @@ Also, you can use [`cmp-emoji`](https://github.com/hrsh7th/cmp-emoji) or [`blink
 | _OctoStateClosedFloat_            | OctoRedFloat       |
 | _OctoStateMergedFloat_            | OctoPurpleFloat    |
 | _OctoStateDraftFloat_             | OctoGreyFloat      |
+| _OctoReviewDiffDeleteText_        | OctoRed            |
+| _OctoReviewDiffAddText_           | OctoGreen          |
 
 The term `GitHub color` refers to the colors used in the WebUI.
 The (addition) `viewer` means the user of the plugin or more precisely the user authenticated via the `gh` CLI tool used to retrieve the data from GitHub.
+
+Completion for `:Octo search` arguments can be overridden for each specific qualifier using `search.completion_overrides` config option.
+Example usecase: disable completion functionality that requires remote calls to GitHub server.
 
 ## 📺 Demos
 

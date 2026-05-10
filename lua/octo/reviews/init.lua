@@ -42,16 +42,16 @@ end
 ---@param callback fun(obj: octo.mutations.StartReview): nil
 function Review:create(callback)
   local query = graphql("start_review_mutation", self.pull_request.id)
-  gh.run {
-    args = { "api", "graphql", "-f", string.format("query=%s", query) },
-    cb = function(output, stderr)
-      if stderr and not utils.is_blank(stderr) then
-        utils.error(stderr)
-      elseif output then
-        local resp = vim.json.decode(output)
-        callback(resp)
-      end
-    end,
+  gh.api.graphql {
+    f = { query = query },
+    opts = {
+      cb = gh.create_callback {
+        success = function(output)
+          local resp = vim.json.decode(output)
+          callback(resp)
+        end,
+      },
+    },
   }
 end
 
@@ -231,7 +231,28 @@ function Review:initiate(opts)
   end)
 end
 
-function Review:discard()
+---Counts pending comments with non-empty bodies in review threads
+---@see octo.PullRequestReviewState for explanation of why we check pullRequestReview.state
+---@param threads octo.ReviewThread[]
+---@return integer count The number of pending comments with content
+local function count_pending_comments(threads)
+  local count = 0
+  for _, thread in ipairs(threads) do
+    for _, comment in ipairs(thread.comments.nodes) do
+      if comment.pullRequestReview.state == "PENDING" and not utils.is_blank(utils.trim(comment.body)) then
+        count = count + 1
+      end
+    end
+  end
+  return count
+end
+
+---Discard the current review
+---@param opts? { skip_confirm?: boolean } Options for discarding the review
+function Review:discard(opts)
+  opts = opts or {}
+  local skip_confirm = opts.skip_confirm or false
+
   gh.api.graphql {
     query = queries.pending_review_threads,
     F = { owner = self.pull_request.owner, name = self.pull_request.name, number = self.pull_request.number },
@@ -248,22 +269,32 @@ function Review:discard()
           end
           self.id = resp.data.repository.pullRequest.reviews.nodes[1].id
 
-          local choice = vim.fn.confirm("All pending comments will get deleted, are you sure?", "&Yes\n&No\n&Cancel", 2)
+          local pending_count = count_pending_comments(resp.data.repository.pullRequest.reviewThreads.nodes)
+          local choice = 1
+          if pending_count > 0 and not skip_confirm then
+            local message = string.format(
+              "%d pending comment%s will be deleted, are you sure?",
+              pending_count,
+              pending_count == 1 and "" or "s"
+            )
+            choice = vim.fn.confirm(message, "&Yes\n&No\n&Cancel", 2)
+          end
+
           if choice == 1 then
             local delete_query = graphql("delete_pull_request_review_mutation", self.id --[[@as string]])
-            gh.run {
-              args = { "api", "graphql", "-f", string.format("query=%s", delete_query) },
-              cb = function(output_inner, stderr_inner)
-                if stderr_inner and not utils.is_blank(stderr_inner) then
-                  utils.error(stderr_inner)
-                elseif output_inner then
-                  self.id = default_id
-                  self.threads = {}
-                  self.files = {}
-                  utils.info "Pending review discarded"
-                  vim.cmd [[tabclose]]
-                end
-              end,
+            gh.api.graphql {
+              f = { query = delete_query },
+              opts = {
+                cb = gh.create_callback {
+                  success = function()
+                    self.id = default_id
+                    self.threads = {}
+                    self.files = {}
+                    utils.info "Pending review discarded"
+                    vim.cmd [[tabclose]]
+                  end,
+                },
+              },
             }
           end
         end
@@ -332,17 +363,17 @@ function Review:submit(event)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, default_id, false)
   local body = utils.escape_char(utils.trim(table.concat(lines, "\n")))
   local query = graphql("submit_pull_request_review_mutation", review_id, event, body, { escape = false })
-  gh.run {
-    args = { "api", "graphql", "-f", string.format("query=%s", query) },
-    cb = function(output, stderr)
-      if stderr and not utils.is_blank(stderr) then
-        utils.error(stderr)
-      elseif output then
-        utils.info "Review was submitted successfully!"
-        pcall(vim.api.nvim_win_close, winid, 0)
-        self.layout:close()
-      end
-    end,
+  gh.api.graphql {
+    f = { query = query },
+    opts = {
+      cb = gh.create_callback {
+        success = function()
+          utils.info "Review was submitted successfully!"
+          pcall(vim.api.nvim_win_close, winid, 0)
+          self.layout:close()
+        end,
+      },
+    },
   }
 end
 
@@ -406,25 +437,18 @@ function Review:add_comment(isSuggestion)
   end
 
   local diff_hunk ---@type string
-  -- for non-added files, check we are in a valid comment range
-  if file.status ~= "A" then
-    for i, range in ipairs(comment_ranges) do
-      if range[1] <= line1 and range[2] >= line2 then
-        diff_hunk = file.diffhunks[i]
-        break
-      end
+  for i, range in ipairs(comment_ranges) do
+    if range[1] <= line1 and range[2] >= line2 then
+      diff_hunk = file.diffhunks[i]
+      break
     end
-    if not diff_hunk then
-      utils.error "Cannot place comments outside diff hunks"
-      return
-    end
-    if not vim.startswith(diff_hunk, "@@") then
-      diff_hunk = "@@ " .. diff_hunk
-    end
-  else
-    -- not printing diff hunk for added files
-    -- we will get the right diff hunk from the server when updating the threads
-    -- TODO: trigger a thread update?
+  end
+  if not diff_hunk then
+    utils.error "Cannot place comments outside diff hunks"
+    return
+  end
+  if not vim.startswith(diff_hunk, "@@") then
+    diff_hunk = "@@ " .. diff_hunk
   end
 
   self.layout:ensure_layout()

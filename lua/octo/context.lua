@@ -19,6 +19,9 @@ local function create_buffer_wrapper(check_fn, error_message)
 end
 
 M.within_octo_buffer = create_buffer_wrapper(nil, "Not an Octo buffer")
+M.within_repo = create_buffer_wrapper(function(b)
+  return b:isRepo()
+end, "Not a Repository buffer")
 M.within_issue = create_buffer_wrapper(function(b)
   return b:isIssue()
 end, "Not an Issue buffer")
@@ -44,14 +47,21 @@ function M.within_review(cb)
   end
 end
 
----@param cb fun(comment: any): nil
-function M.on_comment(cb)
+---@param cb fun(comment: any, buffer: OctoBuffer): nil
+function M.on_comment_in_buffer(cb)
   return M.within_octo_buffer(function(buffer)
     local comment = buffer:get_comment_at_cursor()
     if not comment then
       utils.error "No comment found at cursor"
       return
     end
+    cb(comment, buffer)
+  end)
+end
+
+---@param cb fun(comment: any): nil
+function M.on_comment(cb)
+  return M.on_comment_in_buffer(function(comment, _)
     cb(comment)
   end)
 end

@@ -1,6 +1,8 @@
 local context = require "octo.context"
 local reviews = require "octo.reviews"
 local utils = require "octo.utils"
+local gh = require "octo.gh"
+local mutations = require "octo.gh.mutations"
 
 --- Create a picker to select from a list of callable options
 ---@param options table<string, fun()>
@@ -40,6 +42,40 @@ local create_reaction_picker = function()
   end)
 end
 
+local approve_pr = function()
+  local buffer = utils.get_current_buffer()
+  if not buffer or not buffer:isPullRequest() then
+    utils.error "Not a pull request buffer"
+    return
+  end
+
+  local pull_request = buffer:pullRequest()
+  if not pull_request or not pull_request.id then
+    utils.error "Could not get pull request ID"
+    return
+  end
+
+  vim.ui.input({ prompt = "Enter approval comment (optional): " }, function(body)
+    if body == nil then
+      return
+    end
+    body = body or ""
+    gh.api.graphql {
+      query = mutations.add_pull_request_review,
+      F = { input = { pullRequestId = pull_request.id, event = "APPROVE", body = body } },
+      jq = ".data.addPullRequestReview.pullRequestReview.state",
+      opts = {
+        cb = gh.create_callback {
+          success = function()
+            utils.info "PR approved successfully!"
+            require("octo").load_buffer { bufnr = buffer.bufnr }
+          end,
+        },
+      },
+    }
+  end)
+end
+
 return {
   repo_options = function()
     local commands = require("octo.commands").commands
@@ -65,6 +101,21 @@ return {
       end,
       ["Create Issue"] = commands.issue.create,
       ["Create Discussion"] = commands.discussion.create,
+      ["List Issues"] = context.within_octo_buffer(function(buffer)
+        commands.issue.list(buffer.repo)
+      end),
+      ["List Discussions"] = context.within_octo_buffer(function(buffer)
+        commands.discussion.list(buffer.repo)
+      end),
+      ["List Pull Requests"] = context.within_octo_buffer(function(buffer)
+        commands.pr.list(buffer.repo)
+      end),
+      ["Star Repo"] = commands.repo.star,
+      ["Unstar Repo"] = commands.repo.unstar,
+      ["Change Subscription"] = commands.repo.subscription,
+      ["List Releases"] = context.within_octo_buffer(function(buffer)
+        commands.release.list(buffer.repo)
+      end),
     }
     create_options_picker(options, "Select an option:")
   end,
@@ -82,7 +133,9 @@ return {
       ["Reopen PR"] = commands.pr.reopen,
       ["Merge PR"] = commands.pr.merge,
       ["Mark as Ready for Review"] = commands.pr.ready,
+      ["Mark as Draft"] = commands.pr.draft,
       ["Update Base Branch"] = commands.pr.update,
+      ["Delete Branch"] = require("octo.commands").delete_branch,
       ["Copy URL"] = commands.pr.url,
       ["Open in Browser"] = commands.pr.browser,
       ["Reload PR buffer"] = commands.pr.reload,
@@ -91,6 +144,7 @@ return {
       end,
       ["Start Review"] = commands.review.start,
       ["Resume Review"] = commands.review.resume,
+      ["Approve PR"] = approve_pr,
       ["Add Label(s)"] = commands.label.add,
       ["Remove Label(s)"] = commands.label.remove,
       ["Add Milestone"] = commands.milestone.add,
@@ -104,9 +158,12 @@ return {
       ["Remove Assignee"] = commands.assignee.remove,
       ["Add ProjectV2 Card"] = commands.cardv2.set,
       ["Remove ProjectV2 Card"] = commands.cardv2.remove,
+      ["Change Subscription"] = commands.pr.subscription,
       ["Add Comment"] = commands.comment.add,
       ["Add Reply"] = commands.comment.reply,
       ["Delete Comment"] = commands.comment.delete,
+      ["Reference in New Issue"] = commands.comment.reference,
+      ["Toggle Polling"] = commands.poll.toggle,
       ["View Repo"] = context.within_issue_or_pr(function(buffer)
         commands.repo.view(buffer.repo)
       end),
@@ -131,6 +188,7 @@ return {
       ["Remove Milestone"] = commands.milestone.remove,
       ["Edit Parent Issue"] = commands.parent.edit,
       ["Add Parent Issue"] = commands.parent.add,
+      ["Add Child Issue"] = commands.child.add,
       ["Remove Parent Issue"] = commands.parent.remove,
       ["Assign to Copilot"] = commands.issue.copilot,
       ["Develop Issue"] = commands.issue.develop,
@@ -140,9 +198,32 @@ return {
       ["Remove Assignee"] = commands.assignee.remove,
       ["Add ProjectV2 Card"] = commands.cardv2.set,
       ["Remove ProjectV2 Card"] = commands.cardv2.remove,
+      ["Change Subscription"] = commands.issue.subscription,
       ["Add Comment"] = commands.comment.add,
       ["Delete Comment"] = commands.comment.delete,
+      ["Reference in New Issue"] = commands.comment.reference,
+      ["Toggle Polling"] = commands.poll.toggle,
       ["View Repo"] = context.within_issue_or_pr(function(buffer)
+        commands.repo.view(buffer.repo)
+      end),
+      ["React"] = create_reaction_picker,
+    }
+    create_options_picker(options, "Select an option:")
+  end,
+  discussion_options = function()
+    local commands = require("octo.commands").commands
+
+    local options = {
+      ["Reload Discussion"] = commands.discussion.reload,
+      ["Reopen Discussion"] = commands.discussion.reopen,
+      ["Close Discussion"] = commands.discussion.close,
+      ["Open in Browser"] = commands.discussion.browser,
+      ["Change Category"] = commands.discussion.category,
+      ["Change Subscription"] = commands.discussion.subscription,
+      ["Add Comment"] = commands.comment.add,
+      ["Delete Comment"] = commands.comment.delete,
+      ["Reference in New Issue"] = commands.comment.reference,
+      ["View Repo"] = context.within_discussion(function(buffer)
         commands.repo.view(buffer.repo)
       end),
       ["React"] = create_reaction_picker,
@@ -151,6 +232,9 @@ return {
   end,
   create_issue = function()
     require("octo.commands").create_issue()
+  end,
+  reference_in_new_issue = function()
+    require("octo.commands").reference_in_new_issue()
   end,
   create_discussion = function()
     local buffer = utils.get_current_buffer()
@@ -199,21 +283,21 @@ return {
   checkout_pr = function()
     require("octo.commands").commands.pr.checkout()
   end,
-  list_commits = function()
-    require("octo.picker").commits()
-  end,
+  list_commits = context.within_pr(function(buffer)
+    require("octo.picker").commits(buffer)
+  end),
   review_commits = function()
     local current_review = reviews.get_current_review()
     if not current_review then
       return
     end
-    require("octo.picker").review_commits(function(right, left)
+    require("octo.picker").review_commits(current_review, function(right, left)
       current_review:focus_commit(right, left)
     end)
   end,
-  list_changed_files = function()
-    require("octo.picker").changed_files()
-  end,
+  list_changed_files = context.within_pr(function(buffer)
+    require("octo.picker").changed_files(buffer)
+  end),
   show_pr_diff = function()
     require("octo.commands").show_pr_diff()
   end,
@@ -291,6 +375,9 @@ return {
   end,
   delete_comment = function()
     require("octo.commands").delete_comment()
+  end,
+  comment_edits = function()
+    require("octo.commands").comment_edits()
   end,
   react_hooray = function()
     require("octo.commands").reaction_action "hooray"
@@ -435,6 +522,7 @@ return {
     end
     current_review:submit "APPROVE"
   end,
+  approve_pr = approve_pr,
   comment_review = function()
     local current_review = reviews.get_current_review()
     if not current_review then

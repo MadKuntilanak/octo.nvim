@@ -158,6 +158,9 @@ function M.gen_from_git_commits()
       display = make_display,
       author = string.format("%s <%s>", entry.commit.author.name, entry.commit.author.email),
       date = entry.commit.author.date,
+      obj = {
+        url = entry.html_url,
+      },
     }
   end
 end
@@ -706,8 +709,22 @@ function M.gen_from_notification(opts)
       return nil
     end
     local ref = notification.subject.url:match "/(%d+)$"
+    local filename
+
+    if notification.kind == "issue" then
+      filename = utils.get_issue_uri(ref, notification.repository.full_name)
+    elseif notification.kind == "pull_request" then
+      filename = utils.get_pull_request_uri(ref, notification.repository.full_name)
+    elseif notification.kind == "discussion" then
+      filename = utils.get_discussion_uri(ref, notification.repository.full_name)
+    elseif notification.kind == "release" then
+      filename = utils.get_release_uri(ref, notification.repository.full_name)
+    else
+      filename = ""
+    end
 
     return {
+      filename = filename,
       value = ref,
       ordinal = notification.subject.title .. " " .. notification.repository.full_name .. " " .. ref,
       display = make_display,
@@ -752,6 +769,77 @@ function M.gen_from_issue_templates()
       ordinal = template.name .. " " .. template.about,
       display = make_display,
       template = template,
+    }
+  end
+end
+
+function M.gen_from_release(opts)
+  return function(entry)
+    entry.repo = opts.repo
+
+    local display = entry.name
+    if entry.tagName ~= display then
+      display = display .. " (" .. entry.tagName .. ")"
+    end
+
+    display = display .. " " .. utils.format_date(entry.createdAt)
+
+    return {
+      filename = utils.get_release_uri(entry.tagName, opts.repo),
+      value = entry.tagName,
+      display = display,
+      ordinal = display,
+      obj = entry,
+    }
+  end
+end
+
+---@param edits octo.UserContentEdit[]
+function M.gen_from_comment_edit(edits)
+  local max_author_width = 0
+  for _, edit in ipairs(edits) do
+    local login = edit.editor and edit.editor.login or "unknown"
+    if #login > max_author_width then
+      max_author_width = #login
+    end
+  end
+
+  local displayer = entry_display.create {
+    separator = " ",
+    items = {
+      { width = max_author_width },
+      { remaining = true },
+    },
+  }
+
+  local function abs_local_time(date_string)
+    local utc_ts = utils.parse_utc_date(date_string)
+    local tz_offset = os.difftime(os.time(), os.time(os.date "!*t" --[[@as osdateparam]]))
+    return os.date("%b %d %H:%M", utc_ts + tz_offset) --[[@as string]]
+  end
+
+  local function make_display(entry)
+    local edit = entry.obj
+    local editor = edit.editor and edit.editor.login or "unknown"
+    local abs_time = abs_local_time(edit.editedAt)
+    local rel_time = utils.format_date(edit.editedAt)
+    return displayer {
+      { editor, "OctoUser" },
+      { abs_time .. " (" .. rel_time .. ")", "OctoDate" },
+    }
+  end
+
+  return function(edit)
+    if not edit or vim.tbl_isempty(edit) then
+      return nil
+    end
+    local editor = edit.editor and edit.editor.login or "unknown"
+    local abs_time = abs_local_time(edit.editedAt)
+    return {
+      value = edit.id,
+      ordinal = editor .. " " .. abs_time .. " " .. utils.format_date(edit.editedAt),
+      display = make_display,
+      obj = edit,
     }
   end
 end

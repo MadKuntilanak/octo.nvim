@@ -2,6 +2,7 @@ local M = {}
 
 ---@class CommentMetadata
 ---@field id string
+---@field databaseId integer
 ---@field author string
 ---@field savedBody string
 ---@field body string
@@ -25,6 +26,8 @@ local M = {}
 ---@field snippetEndLine integer
 ---@field bufferStartLine? integer
 ---@field bufferEndLine? integer
+---@field lastEditedAt? string
+---@field includesCreatedEdit? boolean
 local CommentMetadata = {}
 CommentMetadata.__index = CommentMetadata
 
@@ -36,6 +39,7 @@ function CommentMetadata:new(opts)
   local this = {
     author = opts.author,
     id = opts.id,
+    databaseId = opts.databaseId,
     dirty = opts.dirty or false,
     savedBody = opts.savedBody,
     body = opts.body,
@@ -56,6 +60,8 @@ function CommentMetadata:new(opts)
     endLine = opts.endLine,
     snippetStartLine = opts.snippetStartLine,
     snippetEndLine = opts.snippetEndLine,
+    lastEditedAt = opts.lastEditedAt,
+    includesCreatedEdit = opts.includesCreatedEdit,
   }
   setmetatable(this, self)
   return this

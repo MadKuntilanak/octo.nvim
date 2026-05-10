@@ -6,6 +6,7 @@ local queries = require "octo.gh.queries"
 local _, Job = pcall(require, "plenary.job")
 local release = require "octo.release"
 local notify = require "octo.notify"
+local uri = require "octo.uri"
 local vim = vim
 
 local M = {}
@@ -55,6 +56,7 @@ M.state_hl_map = {
   DRAFT = "OctoStateDraft",
   COMPLETED = "OctoStateCompleted",
   NOT_PLANNED = "OctoStateNotPlanned",
+  DUPLICATE = "OctoStateNotPlanned",
   OPEN = "OctoStateOpen",
   APPROVED = "OctoStateApproved",
   CHANGES_REQUESTED = "OctoStateChangesRequested",
@@ -97,7 +99,7 @@ M.file_status_map = {
   renamed = "R",
 }
 
--- https://docs.github.com/en/graphql/reference/enums#statusstate
+---@type table<octo.StatusState, table<string, string>>
 M.state_map = {
   ERROR = { symbol = "× ", hl = "OctoStateDismissed" },
   FAILURE = { symbol = "× ", hl = "OctoStateDismissed" },
@@ -129,6 +131,7 @@ M.merge_state_hl_map = {
   UNSTABLE = "OctoStateDismissed",
 }
 
+---@type table<octo.MergeStateStatus, string>
 M.merge_state_message_map = {
   BEHIND = "- OUT-OF-DATE",
   BLOCKED = "× BLOCKED",
@@ -140,6 +143,9 @@ M.merge_state_message_map = {
   UNSTABLE = "! UNSTABLE",
 }
 
+---@alias octo.PullRequestMergeMethod "MERGE"|"SQUASH"|"REBASE"
+
+---@type table<octo.PullRequestMergeMethod, string>
 M.auto_merge_method_map = {
   MERGE = "merge",
   REBASE = "rebase",
@@ -172,6 +178,7 @@ function M.calculate_strongest_review_state(states)
   end
 end
 
+---@type table<octo.ReactionContent, string>
 M.reaction_map = {
   ["THUMBS_UP"] = "👍 ",
   ["THUMBS_DOWN"] = "👎 ",
@@ -202,6 +209,8 @@ function table.pack(...)
   return { n = select("#", ...), ... }
 end
 
+---@param s any
+---@return boolean
 function M.is_blank(s)
   return (
     s == nil
@@ -297,6 +306,46 @@ function M.get_remote(remote)
   return {
     host = "github.com",
     repo = nil,
+  }
+end
+
+---@param repo string
+---@param number integer
+function M.open_buffer(repo, number)
+  local owner, name = M.split_repo(repo)
+  -- Combined query: issueOrPullRequest covers issues+PRs; discussion is a
+  -- separate field. GitHub returns a partial error when discussion is not
+  -- found, but data is still intact, so we read stdout directly and ignore
+  -- the expected NOT_FOUND partial errors.
+  gh.api.graphql {
+    query = queries.issue_kind,
+    fields = { owner = owner, name = name, number = number },
+    opts = {
+      cb = function(stdout, _stderr)
+        if M.is_blank(stdout) then
+          M.error("No issue, PR, or discussion found with number: " .. number)
+          return
+        end
+        ---@type boolean, octo.queries.IssueKind
+        local ok, decoded = pcall(vim.json.decode, stdout)
+        if not ok or not decoded.data then
+          M.error("No issue, PR, or discussion found with number: " .. number)
+          return
+        end
+        local repo_data = decoded.data.repository
+        local iop = repo_data.issueOrPullRequest
+        local discussion = repo_data.discussion
+        if not M.is_blank(iop) and iop.__typename == "Issue" then
+          M.get_issue(number, repo)
+        elseif not M.is_blank(iop) and iop.__typename == "PullRequest" then
+          M.get_pull_request(number, repo)
+        elseif not M.is_blank(discussion) and discussion.__typename == "Discussion" then
+          M.get_discussion(number, repo)
+        else
+          M.error("No issue, PR, or discussion found with number: " .. number)
+        end
+      end,
+    },
   }
 end
 
@@ -411,6 +460,30 @@ function M.create_milestone(title, description)
         end,
       },
     },
+  }
+end
+
+---Extract progress information from a milestone payload
+---@param milestone { title: string, state: string, openIssueCount: number?, closedIssueCount: number?, progressPercentage: number? }?
+---@return { open: number, closed: number, total: number, percentage: number }?
+function M.get_milestone_progress(milestone)
+  if not milestone or not milestone.openIssueCount then
+    return nil
+  end
+
+  local open = milestone.openIssueCount or 0
+  local closed = milestone.closedIssueCount or 0
+  local total = open + closed
+
+  if total == 0 then
+    return nil
+  end
+
+  return {
+    open = open,
+    closed = closed,
+    total = total,
+    percentage = math.floor(milestone.progressPercentage or 0),
   }
 end
 
@@ -699,16 +772,44 @@ function M.format_seconds(seconds)
   local minutes = math.floor(seconds / 60)
   seconds = seconds % 60
   if minutes < 60 then
+    if seconds == 0 then
+      return string.format("%dm", minutes)
+    end
     return string.format("%dm%ds", minutes, seconds)
   end
   local hours = math.floor(minutes / 60)
   minutes = minutes % 60
   if hours < 24 then
+    if minutes == 0 then
+      return string.format("%dh", hours)
+    end
     return string.format("%dh%dm", hours, minutes)
   end
   local days = math.floor(hours / 24)
   hours = hours % 24
+  if hours == 0 then
+    return string.format("%dd", days)
+  end
   return string.format("%dd%dh", days, hours)
+end
+
+---Formats a Unix epoch timestamp as relative time until that moment
+---@param unix_timestamp number|string Unix epoch seconds
+---@return string Formatted relative time (e.g., "54m 12s")
+function M.format_reset_time(unix_timestamp)
+  local timestamp = tonumber(unix_timestamp)
+  if not timestamp then
+    return "unknown"
+  end
+
+  local now = os.time()
+  local seconds_until = timestamp - now
+
+  if seconds_until <= 0 then
+    return "now"
+  end
+
+  return M.format_seconds(seconds_until)
 end
 
 ---Formats a string as a date
@@ -767,7 +868,7 @@ function M.seconds_between(start_date, end_date)
 end
 
 ---Formats a string as a date
----@param date_string string
+---@param date_string string ISO 8601 date string in UTC format
 ---@param round_under_one_minute? boolean defaults to true
 ---@return string
 function M.format_date(date_string, round_under_one_minute)
@@ -986,87 +1087,12 @@ function M.escape_char(s)
   return escaped
 end
 
---- Gets the repo and id from args.
----@type (fun(args: {n: integer}|string[], is_number: true): string?, integer?)|(fun(args: {n: integer}|string[], is_number: false): string?, string?)
-local function get_repo_id_from_args(args, is_number)
-  local repo, id ---@type string|nil, string|integer|nil
-  if args.n == 0 then
-    M.error "Missing arguments"
-    return
-  elseif args.n == 1 then
-    -- eg: Octo issue 1
-    repo = M.get_remote_name()
-    id = tonumber(args[1])
-  elseif args.n == 2 then
-    -- eg: Octo issue 1 pwntester/octo.nvim
-    repo = args[2] ---@type string
-    id = is_number and tonumber(args[1]) or args[1]
-  else
-    M.error "Unexpected arguments"
-    return
-  end
-  if not repo then
-    M.error "Can not find repo name"
-    return
-  end
-  if type(repo) ~= "string" then
-    M.error(("Expected repo name, received %s"):format(args[2]))
-    return
-  end
-  if not id or (is_number and type(id) ~= "number") then
-    M.error(("Expected issue/PR number, received %s"):format(args[1]))
-    return
-  end
-  return repo, id
-end
-
---- Extracts repo and number from Octo command varargs
----@param ... string|number
----@return string? repo
----@return integer? number
-function M.get_repo_number_from_varargs(...)
-  local args = table.pack(...)
-  return get_repo_id_from_args(args, true)
-end
-
---- Get the URI for a repository
-function M.get_repo_uri(_, repo)
-  return string.format("octo://%s/repo", repo)
-end
-
---- Get the URI for an issue
-function M.get_issue_uri(...)
-  local repo, number = M.get_repo_number_from_varargs(...)
-  return string.format("octo://%s/issue/%s", repo, number)
-end
-
---- Get the URI for an pull request
-function M.get_pull_request_uri(...)
-  local repo, number = M.get_repo_number_from_varargs(...)
-  return string.format("octo://%s/pull/%s", repo, number)
-end
-
-function M.get_discussion_uri(...)
-  local repo, number = M.get_repo_number_from_varargs(...)
-
-  return string.format("octo://%s/discussion/%s", repo, number)
-end
-
-function M.get_release_uri(...)
-  local args = table.pack(...)
-  local repo, tag_name_or_id = get_repo_id_from_args(args, false)
-  local release_id = tonumber(tag_name_or_id)
-  if not release_id then
-    return string.format("octo://%s/release/%s", repo, tag_name_or_id)
-  end
-  if not repo then
-    M.error "Cannot find repo name"
-    return
-  end
-  local owner, name = M.split_repo(repo)
-  local tag_name = release.get_tag_from_release_id { owner = owner, repo = name, release_id = tostring(release_id) }
-  return string.format("octo://%s/release/%s", repo, tag_name)
-end
+--- Backwards compatible wrapper
+M.get_repo_uri = uri.get_repo_uri
+M.get_issue_uri = uri.get_issue_uri
+M.get_pull_request_uri = uri.get_pull_request_uri
+M.get_discussion_uri = uri.get_discussion_uri
+M.get_release_uri = uri.get_release_uri
 
 ---Helper method opening octo buffers
 function M.get(kind, ...)
@@ -1108,19 +1134,19 @@ function M.get_release(...)
 end
 
 ---@param url string
----@return string?, string?, string?
+---@return string?, string?, string?, string?
 function M.parse_url(url)
-  local repo, kind, number = string.match(url, constants.URL_ISSUE_PATTERN)
+  local hostname, repo, kind, number = string.match(url, constants.URL_ISSUE_PATTERN)
   if repo and number and kind == "issues" then
-    return repo, number, "issue"
+    return hostname, repo, number, "issue"
   elseif repo and number and kind == "pull" then
-    return repo, number, kind
+    return hostname, repo, number, kind
   elseif repo and number and kind == "discussions" then
-    return repo, number, "discussion"
+    return hostname, repo, number, "discussion"
   elseif not repo then
-    repo, kind, number = string.match(url, constants.URL_RELEASE_PATTERN)
+    hostname, repo, kind, number = string.match(url, constants.URL_RELEASE_PATTERN)
     if repo and number and kind == "releases" then
-      return repo, number, "release"
+      return hostname, repo, number, "release"
     end
   end
 end
@@ -1228,7 +1254,7 @@ end
 
 ---@param current_repo string
 function M.extract_issue_at_cursor(current_repo)
-  ---@type string?, integer?
+  ---@type string?, string?
   local repo, number = M.extract_pattern_at_cursor(constants.LONG_ISSUE_PATTERN)
   if not repo or not number then
     number = M.extract_pattern_at_cursor(constants.SHORT_ISSUE_PATTERN)
@@ -1243,9 +1269,17 @@ function M.extract_issue_at_cursor(current_repo)
     end
   end
   if not repo or not number then
-    repo, _, number = M.extract_pattern_at_cursor(constants.URL_ISSUE_PATTERN)
+    _, repo, _, number = M.extract_pattern_at_cursor(constants.URL_ISSUE_PATTERN)
   end
-  return repo, number
+  if not repo or not number then
+    local url = M.extract_pattern_at_cursor(constants.MARKDOWN_URL_PATTERN)
+    if url then
+      ---@type string?, string?, string?, string?
+      _, repo, _, number = url:match(constants.URL_ISSUE_PATTERN)
+    end
+  end
+  local casted_number = tonumber(number)
+  return repo, casted_number and math.floor(casted_number) or nil
 end
 
 ---@param str string
@@ -1369,9 +1403,6 @@ end
 
 -- clear buffer undo history
 function M.clear_history()
-  if true then
-    return
-  end
   ---@type integer
   local old_undolevels = vim.o.undolevels
   vim.o.undolevels = -1
@@ -1684,28 +1715,30 @@ function M.get_pull_request_for_current_branch(cb)
         local number = pr.number
         local id = pr.id
         local query = graphql("pull_request_query", base_owner, base_name, number, _G.octo_pv2_fragment)
-        gh.run {
-          args = { "api", "graphql", "--paginate", "--jq", ".", "-f", string.format("query=%s", query) },
-          cb = function(output, stderr)
-            if stderr and not M.is_blank(stderr) then
-              M.print_err(stderr)
-            elseif output then
-              local resp = M.aggregate_pages(output, "data.repository.pullRequest.timelineItems.nodes")
-              ---@type octo.PullRequest
-              local obj = resp.data.repository.pullRequest
-              local PullRequest = require "octo.model.pull-request"
+        gh.api.graphql {
+          f = { query = query },
+          paginate = true,
+          jq = ".",
+          opts = {
+            cb = gh.create_callback {
+              success = function(output)
+                local resp = M.aggregate_pages(output, "data.repository.pullRequest.timelineItems.nodes")
+                ---@type octo.PullRequest
+                local obj = resp.data.repository.pullRequest
+                local PullRequest = require "octo.model.pull-request"
 
-              local opts = {
-                repo = base_owner .. "/" .. base_name,
-                head_repo = obj.headRepository.nameWithOwner,
-                number = number,
-                id = id,
-                head_ref_name = obj.headRefName,
-              }
+                local opts = {
+                  repo = base_owner .. "/" .. base_name,
+                  head_repo = obj.headRepository.nameWithOwner,
+                  number = number,
+                  id = id,
+                  head_ref_name = obj.headRefName,
+                }
 
-              PullRequest.create_with_merge_base(opts, obj, cb)
-            end
-          end,
+                PullRequest.create_with_merge_base(opts, obj, cb)
+              end,
+            },
+          },
         }
       end
     end,
@@ -1935,12 +1968,16 @@ end
 
 --- Logic to determine the state displayed for issue or PR
 ---@param isIssue boolean
----@param state string
----@param stateReason string | nil
+---@param state octo.IssueState|octo.PullRequestState
+---@param stateReason? octo.IssueStateReason
 ---@return string
 function M.get_displayed_state(isIssue, state, stateReason, isDraft)
   if isIssue and state == "CLOSED" then
-    return stateReason or state
+    return (not M.is_blank(stateReason) and stateReason) or state
+  end
+
+  if state == "CLOSED" or state == "MERGED" then
+    return state
   end
 
   if isDraft then
@@ -1951,9 +1988,9 @@ function M.get_displayed_state(isIssue, state, stateReason, isDraft)
 end
 
 --- @class EntryObject
---- @field state string
+--- @field state octo.IssueState
 --- @field isDraft boolean
---- @field stateReason string
+--- @field stateReason octo.IssueStateReason
 --- @field isAnswered boolean
 --- @field closed boolean
 
@@ -1969,9 +2006,10 @@ end
 -- Symbols found with "Telescope symbols"
 M.icons = {
   issue = {
-    open = { " ", "OctoGreen" },
+    open = { " ", "OctoGreen" },
     closed = { " ", "OctoPurple" },
     not_planned = { " ", "OctoGrey" },
+    duplicate = { " ", "OctoGrey" },
   },
   pull_request = {
     open = { " ", "OctoGreen" },
@@ -1980,9 +2018,10 @@ M.icons = {
     closed = { " ", "OctoRed" },
   },
   discussion = {
-    open = { " ", "OctoGrey" },
-    answered = { " ", "OctoGreen" },
-    closed = { " ", "OctoRed" },
+    answered = { " ", "OctoPurple" },
+    resolved = { " ", "OctoPurple" },
+    outdated = { " ", "OctoGrey" },
+    duplicate = { " ", "OctoGrey" },
   },
   notification = {
     issue = {
@@ -2005,10 +2044,10 @@ M.icons = {
   unknown = { " " },
 }
 
---- Get the icon for the entry
+--- Get the icon for issue or pull request entries
 ---@param entry Entry: The entry to get the icon for
 ---@return Icon: The icon for the entry
-function M.get_icon(entry)
+function M.get_issue_pr_icon(entry)
   local kind = entry.kind
 
   if kind == "issue" then
@@ -2019,6 +2058,8 @@ function M.get_icon(entry)
       return M.icons.issue.open
     elseif state == "CLOSED" and stateReason == "NOT_PLANNED" then
       return M.icons.issue.not_planned
+    elseif state == "CLOSED" and stateReason == "DUPLICATE" then
+      return M.icons.issue.duplicate
     elseif state == "CLOSED" then
       return M.icons.issue.closed
     end
@@ -2035,17 +2076,44 @@ function M.get_icon(entry)
     elseif state == "OPEN" then
       return M.icons.pull_request.open
     end
-  elseif kind == "discussion" then
-    local closed = entry.obj.closed
-    local isAnswered = entry.obj.isAnswered
+  end
 
-    if isAnswered ~= vim.NIL and isAnswered then
-      return M.icons.discussion.answered
-    elseif not closed then
-      return M.icons.discussion.open
-    else
-      return M.icons.discussion.closed
-    end
+  return M.icons.unknown
+end
+
+--- Get the icon for discussion entries (for pickers)
+---@param entry Entry: The entry to get the icon for
+---@return Icon: The icon for the entry
+function M.get_discussion_icon(entry)
+  local closed = entry.obj.closed
+  local isAnswered = entry.obj.isAnswered
+  local stateReason = entry.obj.stateReason
+
+  if not closed then
+    return M.icons.notification.discussion.unread
+  elseif isAnswered ~= vim.NIL and isAnswered then
+    return M.icons.discussion.answered
+  elseif stateReason == "RESOLVED" then
+    return M.icons.discussion.resolved
+  elseif stateReason == "OUTDATED" then
+    return M.icons.discussion.outdated
+  elseif stateReason == "DUPLICATE" then
+    return M.icons.discussion.duplicate
+  else
+    return M.icons.discussion.answered
+  end
+end
+
+--- Get the icon for any entry (notifications, etc.)
+---@param entry Entry: The entry to get the icon for
+---@return Icon: The icon for the entry
+function M.get_icon(entry)
+  local kind = entry.kind
+
+  if kind == "issue" or kind == "pull_request" then
+    return M.get_issue_pr_icon(entry)
+  elseif kind == "discussion" then
+    return M.get_discussion_icon(entry)
   end
 
   return M.icons.unknown
