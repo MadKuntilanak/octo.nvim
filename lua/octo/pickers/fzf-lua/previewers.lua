@@ -127,44 +127,6 @@ function M.search()
     local name = match()
     local number = tonumber(match())
 
-    local query ---@type string
-    if kind ~= "discussion" then
-      if kind == "issue" then
-        query = graphql("issue_query", owner, name, number, _G.octo_pv2_fragment)
-      end
-      if kind == "pull_request" then
-        query = graphql("pull_request_query", owner, name, number, _G.octo_pv2_fragment)
-      end
-
-      gh.run {
-        args = { "api", "graphql", "-f", string.format("query=%s", query) },
-        cb = function(output, stderr)
-          if stderr and not utils.is_blank(stderr) then
-            utils.print_err(stderr)
-          elseif output and self.preview_bufnr == tmpbuf and vim.api.nvim_buf_is_valid(tmpbuf) then
-            local result = vim.json.decode(output)
-            local obj
-            if kind == "issue" then
-              obj = result.data.repository.issue
-            elseif kind == "pull_request" then
-              obj = result.data.repository.pullRequest
-            end
-
-            local state = utils.get_displayed_state(kind == "issue", obj.state, obj.stateReason)
-
-            writers.write_title(tmpbuf, obj.title, 1)
-            writers.write_details(tmpbuf, obj)
-            writers.write_body(tmpbuf, obj)
-            writers.write_state(tmpbuf, state:upper(), number)
-            local reactions_line = vim.api.nvim_buf_line_count(tmpbuf) - 1
-            writers.write_block(tmpbuf, { "", "" }, reactions_line)
-            writers.write_reactions(tmpbuf, obj.reactionGroups, reactions_line)
-            vim.bo[tmpbuf].filetype = "octo"
-          end
-        end,
-      }
-    end
-
     if kind == "discussion" then
       gh.api.graphql {
         query = queries.discussion,
@@ -176,10 +138,51 @@ function M.search()
               utils.print_err(stderr)
             elseif output and self.preview_bufnr == tmpbuf and vim.api.nvim_buf_is_valid(tmpbuf) then
               local result = vim.json.decode(output)
-
               writers.discussion_preview(result, tmpbuf)
             end
           end,
+        },
+      }
+    elseif kind == "repo" then
+      return
+    else
+      local query ---@type string
+      if kind == "issue" then
+        query = graphql("issue_query", owner, name, number, _G.octo_pv2_fragment)
+      elseif kind == "pull_request" then
+        query = graphql("pull_request_query", owner, name, number, _G.octo_pv2_fragment)
+        -- elseif kind == "repo" then
+        --   query = queries.repository
+      end
+      gh.api.graphql {
+        f = { query = query },
+        opts = {
+          cb = gh.create_callback {
+            success = function(output)
+              if self.preview_bufnr == tmpbuf and vim.api.nvim_buf_is_valid(tmpbuf) then
+                local result = vim.json.decode(output)
+                local obj
+                if kind == "issue" then
+                  obj = result.data.repository.issue
+                elseif kind == "pull_request" then
+                  obj = result.data.repository.pullRequest
+                elseif kind == "repo" then
+                  obj = result.data.repository.pullRequest
+                end
+
+                local state = utils.get_displayed_state(kind == "issue", obj.state, obj.stateReason)
+
+                writers.write_title(tmpbuf, obj.title, 1)
+                writers.write_details(tmpbuf, obj, false, true) -- include_status = true for preview
+                writers.write_body(tmpbuf, obj)
+                writers.write_state(tmpbuf, state:upper(), number)
+                local reactions_line = vim.api.nvim_buf_line_count(tmpbuf) - 1
+                writers.write_block(tmpbuf, { "", "" }, reactions_line)
+                writers.write_reactions(tmpbuf, obj.reactionGroups, reactions_line)
+                vim.bo[tmpbuf].filetype = "octo"
+              end
+            end,
+          },
         },
       }
     end

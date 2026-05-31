@@ -18,6 +18,7 @@ M.picker = {
   issue_templates = require "octo.pickers.fzf-lua.pickers.issue_templates",
   issues = require "octo.pickers.fzf-lua.pickers.issues",
   labels = require "octo.pickers.fzf-lua.pickers.labels",
+  discussions = require "octo.pickers.fzf-lua.pickers.discussions",
   notifications = require "octo.pickers.fzf-lua.pickers.notifications",
   pending_threads = require "octo.pickers.fzf-lua.pickers.pending_threads",
   project_cards_v2 = require "octo.pickers.fzf-lua.pickers.project_cards_v2",

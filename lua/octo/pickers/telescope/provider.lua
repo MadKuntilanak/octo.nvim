@@ -689,6 +689,9 @@ function M.search(opts)
     or {
       previewer = previewers.discussion,
       entry_maker = entry_maker.gen_from_discussion,
+      entry_maker_static = function(width)
+        return entry_maker.gen_from_discussion(width)
+      end,
     }
 
   local replace = opts.cb and create_replace(opts.cb) or open_buffer

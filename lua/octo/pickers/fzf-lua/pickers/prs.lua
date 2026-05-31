@@ -20,7 +20,6 @@ end
 
 return function(opts)
   opts = opts or {}
-
   if not opts.states then
     opts.states = { "OPEN" }
   end
@@ -29,8 +28,6 @@ return function(opts)
     not_implemented()
     return
   end
-
-  local title_fzf = picker_utils.format_title("PR", opts)
 
   local repo = utils.pop_key(opts, "repo")
   if utils.is_blank(repo) then
@@ -44,7 +41,14 @@ return function(opts)
   local owner, name = utils.split_repo(repo)
   local cfg = octo_config.values
 
-  local window_title = utils.pop_key(opts, "window_title") or "Pull Requests"
+  local repo_name = picker_utils.extract_repo_from_prompt(opts.prompt)
+  local title
+  if repo_name then
+    title = string.format(" Pull Request in %s ", repo_name)
+  else
+    title = string.format(" Pull Request in %s ", repo)
+  end
+
   local prompt_title = utils.pop_key(opts, "prompt_title")
 
   local formatted_pulls = {} ---@type table<string, table> entry.ordinal -> entry
@@ -76,10 +80,8 @@ return function(opts)
               local entry = entry_maker.gen_from_issue(pull)
 
               if entry ~= nil then
-                local icon_with_hl = utils.get_icon(entry)
-                local icon_str = fzf.utils.ansi_from_hl(icon_with_hl[2], icon_with_hl[1])
-
-                local prefix = fzf.utils.ansi_from_hl("Number", entry.value)
+                local icon_str = picker_utils.get_entry_icon(entry)
+                local prefix = fzf.utils.ansi_from_hl("Comment", entry.value)
                 local new_formatted_entry = prefix .. " " .. icon_str .. " " .. entry.obj.title
 
                 entry.ordinal = fzf.utils.strip_ansi_coloring(new_formatted_entry)
@@ -100,17 +102,15 @@ return function(opts)
   fzf.fzf_exec(get_contents, {
     prompt = picker_utils.get_prompt(prompt_title),
     previewer = previewers.issue(formatted_pulls),
-    winopts = vim.tbl_deep_extend("force", {
-      title = title_fzf,
-    }, cfg.picker_config.fzflua.winopts),
     fzf_opts = {
-      ["--no-multi"] = "", -- TODO this can support multi, maybe.
+      -- ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--info"] = "default",
     },
-    winopts = {
-      title = window_title,
+    winopts = vim.tbl_deep_extend("force", {
+      title = title,
       title_pos = "center",
-    },
+    }, cfg.picker_config.fzflua.winopts or {}),
+
     actions = vim.tbl_extend("force", fzf_actions.common_open_actions(formatted_pulls), {
       [utils.convert_vim_mapping_to_fzf(cfg.picker_config.mappings.checkout_pr.lhs)] = function(selected)
         local entry = formatted_pulls[selected[1]]

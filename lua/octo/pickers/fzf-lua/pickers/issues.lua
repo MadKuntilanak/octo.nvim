@@ -27,11 +27,18 @@ return function(opts)
   end
 
   local owner, name = utils.split_repo(repo)
-  local cfg = octo_config.values
-  local order_by = cfg.issues.order_by
+  cfg = octo_config.values
 
-  local window_title = utils.pop_key(opts, "window_title") or "Issues"
+  local repo_name = picker_utils.extract_repo_from_prompt(opts.prompt)
+  local title
+  if repo_name then
+    title = string.format(" Issue in %s ", repo_name)
+  else
+    title = string.format(" Issue in %s ", repo)
+  end
+
   local prompt_title = utils.pop_key(opts, "prompt_title")
+
   local cb = utils.pop_key(opts, "cb")
 
   local formatted_issues = {} ---@type table<string, table> entry.ordinal -> entry
@@ -60,15 +67,12 @@ return function(opts)
               local entry = entry_maker.gen_from_issue(issue)
 
               if entry ~= nil then
-                local icon_with_hl = utils.get_icon(entry)
-                local icon_str = fzf.utils.ansi_from_hl(icon_with_hl[2], icon_with_hl[1])
-
-                local prefix = fzf.utils.ansi_from_hl("Number", entry.value)
-                local new_formatted_entry = prefix .. " " .. icon_str .. " " .. entry.obj.title
+                local icon_str = picker_utils.get_entry_icon(entry)
+                local issue_idx = fzf.utils.ansi_from_hl("Comment", entry.value)
+                local new_formatted_entry = issue_idx .. " " .. icon_str .. " " .. entry.obj.title
 
                 entry.ordinal = fzf.utils.strip_ansi_coloring(new_formatted_entry)
                 formatted_issues[entry.ordinal] = entry
-
                 fzf_cb(new_formatted_entry)
               end
             end
@@ -96,13 +100,14 @@ return function(opts)
     prompt = picker_utils.get_prompt(prompt_title),
     previewer = previewers.issue(formatted_issues),
     fzf_opts = {
-      ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--header"] = opts.results_title,
       ["--info"] = "default",
     },
     winopts = vim.tbl_deep_extend("force", {
-      title = title_fzf,
-    }, cfg.picker_config.fzflua.winopts),
-    actions = fzf_actions.common_open_actions(formatted_issues),
+      title = title,
+      title_pos = "center",
+    }, octo_config.values.picker_config.fzflua.winopts),
+
+    actions = actions,
   })
 end

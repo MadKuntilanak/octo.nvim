@@ -10,35 +10,40 @@ function M.gen_from_issue(issue_table)
   if not issue_table or vim.tbl_isempty(issue_table) then
     return nil
   end
-
-  local kind, filename, repo, ordinal
-
-  if issue_table.__typename == "Issue" then
-    kind = "issue"
+  local kind = issue_table.__typename == "Issue" and "issue" or "pull_request"
+  kind = issue_table.__typename == "Discussion" and "discussion" or kind
+  kind = issue_table.__typename == "Repository" and "repo" or kind
+  local filename ---@type string
+  local repo ---@type string
+  local ordinal ---@type string
+  local value ---@type integer
+  if kind == "issue" then
     filename = utils.get_issue_uri(issue_table.number, issue_table.repository.nameWithOwner)
     repo = issue_table.repository.nameWithOwner
     ordinal = issue_table.number .. " " .. issue_table.title
-  elseif issue_table.__typename == "PullRequest" then
-    kind = "pull_request"
-    filename = utils.get_pull_request_uri(issue_table.number, issue_table.repository.nameWithOwner)
-    repo = issue_table.repository.nameWithOwner
-    ordinal = issue_table.number .. " " .. issue_table.title
-  elseif issue_table.__typename == "Discussion" then
-    kind = "discussion"
+    value = issue_table.number
+  elseif kind == "discussion" then
     filename = utils.get_discussion_uri(issue_table.number, issue_table.repository.nameWithOwner)
     repo = issue_table.repository.nameWithOwner
     ordinal = issue_table.number .. " " .. issue_table.title
-  elseif issue_table.__typename == "Repository" then
-    kind = "repo"
-    filename = utils.get_repo_uri(nil, issue_table.nameWithOwner)
+    value = issue_table.number
+  elseif kind == "repo" then
+    filename = utils.get_repo_uri(_, issue_table.nameWithOwner)
     repo = issue_table.nameWithOwner
-    ordinal = issue_table.number
+    ordinal = issue_table.number or 0
+    -- ordinal = (issue_table.number or 0) .. " " .. issue_table.title
+    value = 0
+  else
+    filename = utils.get_pull_request_uri(issue_table.number, issue_table.repository.nameWithOwner)
+    repo = issue_table.repository.nameWithOwner
+    ordinal = issue_table.number .. " " .. issue_table.title
+    value = issue_table.number
   end
 
   return {
     filename = filename,
     kind = kind,
-    value = issue_table.number,
+    value = value,
     ordinal = ordinal,
     obj = issue_table,
     repo = repo,

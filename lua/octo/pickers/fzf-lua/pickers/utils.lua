@@ -19,6 +19,91 @@ M.dropdown_opts = vim.tbl_deep_extend("force", M.multi_dropdown_opts, {
   },
 })
 
+---@return string|nil
+function M.extract_repo_from_prompt(prompt)
+  if not prompt then
+    return nil
+  end
+  local prompts = type(prompt) == "table" and prompt or { prompt }
+  for _, p in ipairs(prompts) do
+    -- format: repo:owner/name
+    local repo = p:match "repo:([%w%-%.]+/[%w%-%.]+)"
+    if repo then
+      return repo
+    end
+
+    -- format: owner/name (standalone, tanpa prefix)
+    -- repo = p:match "^([%w%-%.]+/[%w%-%.]+)"
+    -- if repo then
+    --   return repo
+    -- end
+
+    -- format: grep anything
+    repo = p:match "([%w][%w%-%.]*%/[%w][%w%-%.]*)"
+    if repo then
+      return repo
+    end
+  end
+  return nil
+end
+
+function M.get_entry_icon(entry)
+  local kind = entry.kind
+  local entry_obj = entry.obj
+  local icon_with_hl = utils.get_icon(entry)
+  local icon = icon_with_hl[1]
+  local icon_hl = icon_with_hl[2]
+  local highlight
+
+  if kind == "discussion" then
+    if entry_obj.isAnswered == true then
+      if entry_obj.closed == true then
+        highlight = "OctoBlue"
+      else
+        highlight = "OctoGreen"
+      end
+    elseif entry_obj.closed == true then
+      highlight = "OctoRed"
+    else
+      highlight = "OctoYellow"
+    end
+  elseif kind == "issue" then
+    if entry_obj.state == "OPEN" then
+      if entry_obj.stateReason == "REOPENED" then
+        highlight = "OctoYellow"
+      else
+        highlight = "OctoGreen"
+      end
+    elseif entry_obj.state == "CLOSED" then
+      if entry_obj.stateReason == "COMPLETED" then
+        highlight = "OctoBlue"
+      elseif entry_obj.stateReason == "NOT_PLANNED" then
+        highlight = "Comment"
+      else
+        highlight = "OctoRed"
+      end
+    else
+      highlight = "Comment"
+    end
+  elseif kind == "pull_request" then
+    if entry_obj.state == "MERGED" then
+      highlight = "OctoBlue"
+    elseif entry_obj.state == "CLOSED" then
+      highlight = "OctoRed"
+    elseif entry_obj.isDraft == true then
+      highlight = "Comment"
+    else
+      highlight = "OctoGreen"
+    end
+  elseif kind == "repo" then
+    highlight = "OctoBlue"
+  else
+    highlight = icon_hl
+  end
+
+  return fzf_utils.ansi_from_hl(highlight, icon)
+end
+
 ---Open the entry in a buffer.
 ---
 ---@param command 'default' |'horizontal' | 'vertical' | 'tab'

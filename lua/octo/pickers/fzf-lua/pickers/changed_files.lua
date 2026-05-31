@@ -5,6 +5,7 @@ local fzf = require "fzf-lua"
 local gh = require "octo.gh"
 local previewers = require "octo.pickers.fzf-lua.previewers"
 local utils = require "octo.utils"
+local octo_config = require "octo.config"
 
 ---@param opts {repo: string, number: integer, prompt_title: string?}
 return function(opts)
@@ -45,9 +46,13 @@ return function(opts)
     prompt = opts.prompt_title or "",
     fzf_opts = {
       ["--delimiter"] = " ",
-      ["--no-multi"] = "", -- TODO this can support multi, maybe.
+      -- ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--with-nth"] = "2..",
     },
+    winopts = vim.tbl_deep_extend("force", {
+      title = title_fzf,
+    }, octo_config.values.picker_config.fzflua.winopts or {}),
+
     previewer = previewers.changed_files(formatted_files),
     actions = fzf_actions.common_buffer_actions(formatted_files),
   })

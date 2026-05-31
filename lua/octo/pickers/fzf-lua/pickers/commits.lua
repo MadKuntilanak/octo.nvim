@@ -5,6 +5,7 @@ local fzf = require "fzf-lua"
 local gh = require "octo.gh"
 local previewers = require "octo.pickers.fzf-lua.previewers"
 local utils = require "octo.utils"
+local octo_config = require "octo.config"
 
 ---@param opts {repo: string, number: integer, prompt_title: string?}
 return function(opts)
@@ -25,7 +26,7 @@ return function(opts)
 
             if entry ~= nil then
               formatted_commits[entry.ordinal] = entry
-              entry.repo = buffer.repo
+              -- entry.repo = buffer.repo
               fzf_cb(entry.ordinal)
             end
           end
@@ -39,11 +40,15 @@ return function(opts)
   fzf.fzf_exec(get_contents, {
     prompt = opts.prompt_title or "",
     fzf_opts = {
-      ["--delimiter"] = " ",
+      -- ["--delimiter"] = " ",
       ["--info"] = "default",
       ["--no-multi"] = "", -- TODO this can support multi, maybe.
       ["--with-nth"] = "2..",
     },
+    winopts = vim.tbl_deep_extend("force", {
+      title = title_fzf,
+    }, octo_config.values.picker_config.fzflua.winopts or {}),
+
     previewer = previewers.commit(formatted_commits, opts.repo),
     actions = fzf_actions.common_buffer_actions(formatted_commits),
   })

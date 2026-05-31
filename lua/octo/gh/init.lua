@@ -380,9 +380,9 @@ function M.create_graphql_opts(opts)
   -- add query to the existing raw-field
   local f = opts.f or {}
   local query = opts.query or f.query
-  if not query then
-    return
-  end
+  -- if not query then
+  --   return
+  -- end
   opts.query = nil
 
   f.query = query
