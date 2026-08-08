@@ -534,6 +534,8 @@ local function get_state_icon(state, state_reason, is_issue, is_discussion)
       return utils.icons.pull_request.closed
     elseif state == "DRAFT" then
       return utils.icons.pull_request.draft
+    elseif state == "QUEUED" then
+      return utils.icons.pull_request.queued
     end
   end
 end
@@ -579,7 +581,7 @@ function M.write_state(bufnr, state, number)
   if buffer:isDiscussion() then
     display_state = state
   else
-    display_state = utils.get_displayed_state(is_issue, obj.state, obj.stateReason, obj.isDraft)
+    display_state = utils.get_displayed_state(is_issue, obj.state, obj.stateReason, obj.isDraft, obj.isInMergeQueue)
   end
 
   local is_discussion = buffer:isDiscussion()
@@ -700,8 +702,9 @@ end
 ---@param state string
 ---@param state_reason? string
 ---@param is_draft? boolean
-local function add_status_detail(details, is_issue, state, state_reason, is_draft)
-  local display_state = utils.get_displayed_state(is_issue, state, state_reason, is_draft)
+---@param is_in_merge_queue? boolean
+local function add_status_detail(details, is_issue, state, state_reason, is_draft, is_in_merge_queue)
+  local display_state = utils.get_displayed_state(is_issue, state, state_reason, is_draft, is_in_merge_queue)
 
   TextChunkBuilder:new()
     :detail_label("Status")
@@ -723,7 +726,7 @@ function M.write_details(bufnr, issue, update, include_status)
   local details = {} ---@type [string, string][][]
 
   if include_status then
-    add_status_detail(details, is_issue, issue.state, issue.stateReason, issue.isDraft)
+    add_status_detail(details, is_issue, issue.state, issue.stateReason, issue.isDraft, issue.isInMergeQueue)
   end
 
   table.insert(details, {
@@ -2274,6 +2277,11 @@ end
 ---@param bufnr integer
 ---@param item octo.fragments.AutoSquashEnabledEvent
 function M.write_auto_squash_enabled_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   TextChunkBuilder:new()
     :timeline_marker("auto_squash")
     :actor(item.actor)
@@ -2285,6 +2293,11 @@ end
 ---@param bufnr integer
 ---@param item octo.fragments.AutoMergeEnabledEvent
 function M.write_auto_merge_enabled_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   TextChunkBuilder:new()
     :timeline_marker("auto_squash")
     :actor(item.actor)
@@ -2296,6 +2309,11 @@ end
 ---@param bufnr integer
 ---@param item octo.fragments.AutoMergeDisabledEvent
 function M.write_auto_merge_disabled_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   TextChunkBuilder:new()
     :timeline_marker("auto_squash")
     :actor(item.actor)
@@ -2305,8 +2323,62 @@ function M.write_auto_merge_disabled_event(bufnr, item)
 end
 
 ---@param bufnr integer
+---@param item octo.fragments.AddedToMergeQueueEvent
+function M.write_added_to_merge_queue_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
+  TextChunkBuilder:new()
+    :timeline_marker("merge_queue")
+    :actor(item.actor)
+    :heading(" added this pull request to the merge queue")
+    :date(item.createdAt)
+    :write_event(bufnr)
+end
+
+---@param bufnr integer
+---@param item octo.fragments.RemovedFromMergeQueueEvent
+function M.write_removed_from_merge_queue_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
+  -- Skip rendering when merged — the MergedEvent already covers that in the timeline
+  if item.reason == "merged" then
+    return
+  end
+
+  local reason_text = item.reason
+      and ({
+        manual = "a manual request",
+        failed_checks = "failed checks",
+        checks_timed_out = "no response for status checks",
+      })[item.reason]
+    or nil
+
+  local builder = TextChunkBuilder:new()
+    :timeline_marker("merge_queue")
+    :actor(item.actor)
+    :heading " removed this pull request from the merge queue"
+
+  if reason_text then
+    builder:heading(" due to " .. reason_text)
+  end
+
+  builder:date(item.createdAt):write_event(bufnr)
+end
+
+---@param bufnr integer
 ---@param item octo.fragments.HeadRefDeletedEvent
 function M.write_head_ref_deleted_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   TextChunkBuilder:new()
     :timeline_marker("head_ref")
     :actor(item.actor)
@@ -2347,6 +2419,11 @@ end
 ---@param bufnr integer
 ---@param item octo.fragments.HeadRefRestoredEvent
 function M.write_head_ref_restored_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   TextChunkBuilder:new()
     :timeline_marker("head_ref")
     :actor(item.actor)
@@ -2361,6 +2438,12 @@ end
 ---@param items octo.fragments.HeadRefForcePushedEvent[]
 function M.write_head_ref_force_pushed_events(bufnr, items)
   local total_events = #items
+
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(items[1].actor) then
+    return
+  end
+
   local builder = TextChunkBuilder:new()
     :timeline_marker("force_push")
     :actor(items[1].actor)
@@ -2560,6 +2643,11 @@ end
 ---@param bufnr integer
 ---@param item octo.fragments.DeployedEvent
 function M.write_deployed_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   local bubble_info = utils.deployed_state_map[item.deployment.state]
   TextChunkBuilder:new()
     :timeline_marker("deployed")
@@ -2827,6 +2915,11 @@ end
 ---@param bufnr integer
 ---@param item octo.fragments.ConvertToDraftEvent
 function M.write_convert_to_draft_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   TextChunkBuilder:new()
     :timeline_marker("draft")
     :actor(item.actor)
@@ -2852,6 +2945,11 @@ end
 ---@param bufnr integer
 ---@param item octo.fragments.BaseRefChangedEvent
 function M.write_base_ref_changed_event(bufnr, item)
+  -- Handle case where actor is nil (can happen on GHES when fragment is excluded)
+  if utils.is_blank(item.actor) then
+    return
+  end
+
   TextChunkBuilder:new()
     :timeline_marker("base_ref_changed")
     :actor(item.actor)
@@ -3012,14 +3110,20 @@ end
 
 ---@param bufnr integer
 ---@param item octo.fragments.MergedEvent
-function M.write_merged_event(bufnr, item)
-  TextChunkBuilder:new()
-    :timeline_marker("merged")
-    :actor(item.actor)
-    :heading(" merged commit ")
-    :text(item.commit.abbreviatedOid, "OctoDetailsLabel")
-    :heading(" into ")
+---@param via_queue? boolean
+function M.write_merged_event(bufnr, item, via_queue)
+  local builder = TextChunkBuilder:new():timeline_marker("merged"):actor(item.actor)
+
+  if via_queue then
+    builder:heading " merged via the queue into "
+  else
+    builder:heading " merged into "
+  end
+
+  builder
     :heading(item.mergeRefName)
+    :heading(" with commit ")
+    :text(item.commit.abbreviatedOid, "OctoDetailsLabel")
     :date(item.createdAt)
     :write_event(bufnr)
 end
@@ -3551,6 +3655,17 @@ function M.write_timeline_items(bufnr, obj)
   --- labeled/unlabeled events or subissues events are rendered
   table.insert(timeline_nodes, {})
 
+  --- Pre-scan: detect if this PR was merged via the merge queue.
+  --- The RemovedFromMergeQueueEvent (reason: "merged") appears after MergedEvent
+  --- in the timeline, so we need to know upfront to adjust MergedEvent rendering.
+  local merged_via_queue = false
+  for _, node in ipairs(timeline_nodes) do
+    if node.__typename == "RemovedFromMergeQueueEvent" and node.reason == "merged" then
+      merged_via_queue = true
+      break
+    end
+  end
+
   ---@param items any[]
   local function clear_items(items)
     for idx = #items, 1, -1 do
@@ -3588,6 +3703,7 @@ function M.write_timeline_items(bufnr, obj)
       and (
         not item
         or item.__typename ~= "HeadRefForcePushedEvent"
+        or not item.actor
         or item.actor.login ~= unrendered_force_push_events[1].actor.login
       )
     then
@@ -3676,7 +3792,11 @@ function M.write_timeline_items(bufnr, obj)
       local entry = timeline_registry.get(item.__typename)
       if entry then
         if entry.writer then
-          entry.writer(bufnr, item)
+          if item.__typename == "MergedEvent" and merged_via_queue then
+            M.write_merged_event(bufnr, item, true)
+          else
+            entry.writer(bufnr, item)
+          end
           if entry.sets_prev_event == nil or entry.sets_prev_event then
             prev_is_event = true
           end
@@ -3740,6 +3860,8 @@ do
   reg("AutoSquashEnabledEvent", { writer = M.write_auto_squash_enabled_event })
   reg("AutoMergeEnabledEvent", { writer = M.write_auto_merge_enabled_event })
   reg("AutoMergeDisabledEvent", { writer = M.write_auto_merge_disabled_event })
+  reg("AddedToMergeQueueEvent", { writer = M.write_added_to_merge_queue_event })
+  reg("RemovedFromMergeQueueEvent", { writer = M.write_removed_from_merge_queue_event })
   reg("AddedToProjectV2Event", { writer = M.write_added_to_project_v2_event })
   reg("RemovedFromProjectV2Event", { writer = M.write_removed_from_project_v2_event })
   reg("ProjectV2ItemStatusChangedEvent", { writer = M.write_project_v2_item_status_changed_event })

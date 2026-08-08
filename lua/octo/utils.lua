@@ -54,6 +54,7 @@ M.state_hl_map = {
   MERGED = "OctoStateMerged",
   CLOSED = "OctoStateClosed",
   DRAFT = "OctoStateDraft",
+  QUEUED = "OctoStateQueued",
   COMPLETED = "OctoStateCompleted",
   NOT_PLANNED = "OctoStateNotPlanned",
   DUPLICATE = "OctoStateNotPlanned",
@@ -645,13 +646,13 @@ function M.get_upstream_branch_from_config(pr)
   return ""
 end
 
--- Determines if we are locally in a branch matting the pr head ref when
+-- Determines if we are locally in a branch matching the pr head ref when
 -- the remote and branch information is stored in the branch's git config values
 -- The gh CLI tool stores remote info directly in {branch.{branch}.x} configuration
 -- fields and does not create a remote
 ---@param pr PullRequest
 function M.in_pr_branch_config_tracked(pr)
-  return M.get_upstream_branch_from_config(pr):lower() == pr.head_ref_name
+  return M.get_upstream_branch_from_config(pr) == pr.head_ref_name
 end
 
 --- Determines if we are locally are in a branch matching the pr head ref
@@ -1971,7 +1972,7 @@ end
 ---@param state octo.IssueState|octo.PullRequestState
 ---@param stateReason? octo.IssueStateReason
 ---@return string
-function M.get_displayed_state(isIssue, state, stateReason, isDraft)
+function M.get_displayed_state(isIssue, state, stateReason, isDraft, isInMergeQueue)
   if isIssue and state == "CLOSED" then
     return (not M.is_blank(stateReason) and stateReason) or state
   end
@@ -1984,12 +1985,17 @@ function M.get_displayed_state(isIssue, state, stateReason, isDraft)
     return "DRAFT"
   end
 
+  if isInMergeQueue and state == "OPEN" then
+    return "QUEUED"
+  end
+
   return state
 end
 
 --- @class EntryObject
 --- @field state octo.IssueState
 --- @field isDraft boolean
+--- @field isInMergeQueue? boolean
 --- @field stateReason octo.IssueStateReason
 --- @field isAnswered boolean
 --- @field closed boolean
@@ -2016,6 +2022,7 @@ M.icons = {
     draft = { " ", "OctoGrey" },
     merged = { " ", "OctoPurple" },
     closed = { " ", "OctoRed" },
+    queued = { " ", "OctoYellow" },
   },
   discussion = {
     answered = { " ", "OctoPurple" },
@@ -2066,6 +2073,7 @@ function M.get_issue_pr_icon(entry)
   elseif kind == "pull_request" then
     local state = entry.obj.state
     local isDraft = entry.obj.isDraft
+    local isInMergeQueue = entry.obj.isInMergeQueue
 
     if state == "MERGED" then
       return M.icons.pull_request.merged
@@ -2073,6 +2081,8 @@ function M.get_issue_pr_icon(entry)
       return M.icons.pull_request.closed
     elseif isDraft then
       return M.icons.pull_request.draft
+    elseif state == "OPEN" and isInMergeQueue then
+      return M.icons.pull_request.queued
     elseif state == "OPEN" then
       return M.icons.pull_request.open
     end
@@ -2135,6 +2145,15 @@ function M.copy_sha(sha, register)
   vim.fn.setreg(register, sha, "c")
   local message = register ~= "+" and "(" .. register .. " register)" or "to the system clipboard (+ register)"
   M.info("Copied SHA '" .. sha:sub(1, 7) .. "' " .. message)
+end
+
+---@param name string
+---@param register? string
+function M.copy_branch(name, register)
+  register = register or "+"
+  vim.fn.setreg(register, name, "c")
+  local message = register ~= "+" and "(" .. register .. " register)" or "to the system clipboard (+ register)"
+  M.info("Copied branch '" .. name .. "' " .. message)
 end
 
 ---@param opts { prompt: string }

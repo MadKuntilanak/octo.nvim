@@ -65,6 +65,7 @@ local M = {}
 ---@field icons boolean|fun(name: string, ext: string): string?, string?
 
 ---@class OctoConfigUi
+---@field conceallevel integer
 ---@field use_signcolumn boolean
 ---@field use_statuscolumn boolean
 ---@field use_foldtext boolean
@@ -75,6 +76,7 @@ local M = {}
 ---@class OctoConfigReviews
 ---@field auto_show_threads boolean
 ---@field focus OctoSplit
+---@field show_virtual_text boolean
 
 ---@class OctoConfigDiscussions
 ---@field order_by OctoConfigOrderBy
@@ -252,6 +254,7 @@ function M.get_default_values()
       reopened = { "  ", "OctoGreen" },
       assigned = "  ",
       locked = "  ",
+      merge_queue = "  ",
       review_requested = "  ",
     },
     right_bubble_delimiter = "", -- bubble delimiter
@@ -268,6 +271,7 @@ function M.get_default_values()
       projects_v2 = false,
     },
     ui = {
+      conceallevel = 2, -- conceallevel for octo buffers
       use_signcolumn = false, -- show "modified" marks on the sign column
       use_statuscolumn = true, -- show "modified" marks on the status column
       use_foldtext = true,
@@ -290,6 +294,7 @@ function M.get_default_values()
     reviews = {
       auto_show_threads = true, -- automatically show comment threads on cursor move
       focus = "right", -- focus right buffer on diff open
+      show_virtual_text = true, -- show virtual text with comment count and date
     },
     runs = {
       icons = {
