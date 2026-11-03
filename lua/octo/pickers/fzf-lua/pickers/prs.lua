@@ -79,15 +79,25 @@ return function(opts)
             for _, pull in ipairs(pull_requests) do
               local entry = entry_maker.gen_from_issue(pull)
 
-              if entry ~= nil then
-                local icon_str = picker_utils.get_entry_icon(entry)
-                local prefix = fzf.utils.ansi_from_hl("Comment", entry.value)
-                local new_formatted_entry = prefix .. " " .. icon_str .. " " .. entry.obj.title
+              for _, pull in ipairs(pull_requests) do
+                local entry = entry_maker.gen_from_issue(pull)
 
-                entry.ordinal = fzf.utils.strip_ansi_coloring(new_formatted_entry)
-                formatted_pulls[entry.ordinal] = entry
-
-                fzf_cb(new_formatted_entry)
+                if entry ~= nil then
+                  formatted_pulls[entry.ordinal] = entry
+                  local highlight
+                  if entry.obj.isDraft then
+                    highlight = "OctoSymbol"
+                  else
+                    highlight = "OctoStateOpen"
+                  end
+                  local prefix = fzf.utils.ansi_from_hl(highlight, entry.value)
+                  local title = entry.obj.title
+                  local stack_indicator = utils.get_stack_indicator(entry.obj)
+                  if stack_indicator then
+                    title = title .. "  " .. fzf.utils.ansi_from_hl("Comment", stack_indicator)
+                  end
+                  fzf_cb(prefix .. " " .. title)
+                end
               end
             end
           end

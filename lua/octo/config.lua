@@ -69,6 +69,7 @@ local M = {}
 ---@field use_signcolumn boolean
 ---@field use_statuscolumn boolean
 ---@field use_foldtext boolean
+---@field fold_checks boolean
 
 ---@class OctoConfigIssues
 ---@field order_by OctoConfigOrderBy
@@ -275,6 +276,7 @@ function M.get_default_values()
       use_signcolumn = false, -- show "modified" marks on the sign column
       use_statuscolumn = true, -- show "modified" marks on the status column
       use_foldtext = true,
+      fold_checks = true, -- fold the CI checks list in the PR details, closed by default
     },
     issues = {
       order_by = { -- criteria to sort results of `Octo issue list`
@@ -405,6 +407,7 @@ function M.get_default_values()
         merge_pr = { lhs = "<localleader>pm", desc = "merge commit PR" },
         squash_and_merge_pr = { lhs = "<localleader>psm", desc = "squash and merge PR" },
         rebase_and_merge_pr = { lhs = "<localleader>prm", desc = "rebase and merge PR" },
+        merge_pr_stack = { lhs = "<localleader>pk", desc = "merge PR stack (this PR and all below it)" },
         merge_pr_queue = {
           lhs = "<localleader>pq",
           desc = "merge commit PR and add to merge queue (Merge queue must be enabled in the repo)",
@@ -431,6 +434,10 @@ function M.get_default_values()
         copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
         copy_sha = { lhs = "<C-e>", desc = "copy commit SHA to system clipboard" },
         goto_file = { lhs = "gf", desc = "go to file" },
+        stack_up = { lhs = "]s", desc = "open the next PR up the stack" },
+        stack_down = { lhs = "[s", desc = "open the next PR down the stack" },
+        goto_check = { lhs = "<localleader>gc", desc = "open the CI check under the cursor" },
+        toggle_checks = { lhs = "<localleader>tc", desc = "fold or unfold the CI checks list" },
         add_assignee = { lhs = "<localleader>aa", desc = "add assignee" },
         remove_assignee = { lhs = "<localleader>ad", desc = "remove assignee" },
         create_label = { lhs = "<localleader>lc", desc = "create label" },
@@ -452,6 +459,7 @@ function M.get_default_values()
         react_rocket = { lhs = "<localleader>rr", desc = "add/remove 🚀 reaction" },
         react_laugh = { lhs = "<localleader>rl", desc = "add/remove 😄 reaction" },
         react_confused = { lhs = "<localleader>rc", desc = "add/remove 😕 reaction" },
+        review = { lhs = "<localleader>ve", desc = "start or resume a review for the current PR" },
         review_start = { lhs = "<localleader>vs", desc = "start a review for the current PR" },
         review_resume = { lhs = "<localleader>vr", desc = "resume a pending review for the current PR" },
         resolve_thread = { lhs = "<localleader>rt", desc = "resolve PR thread" },
@@ -789,6 +797,7 @@ function M.validate_config()
       validate_type(config.ui.use_signcolumn, "ui.use_signcolumn", "boolean")
       validate_type(config.ui.use_statuscolumn, "ui.use_statuscolumn", "boolean")
       validate_type(config.ui.use_foldtext, "ui.use_foldtext", "boolean")
+      validate_type(config.ui.fold_checks, "ui.fold_checks", "boolean")
     end
     if validate_type(config.colors, "colors", "table") then
       ---@diagnostic disable-next-line: no-unknown

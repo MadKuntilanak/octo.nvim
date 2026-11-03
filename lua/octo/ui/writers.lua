@@ -714,6 +714,244 @@ local function add_status_detail(details, is_issue, state, state_reason, is_draf
     :write_detail_line(details)
 end
 
+-- Badge label, bubble highlight and matching icon highlight for each stack entry state
+local stack_badge_map = {
+  MERGED = { "MERGED", "OctoStateMergedBubble", "OctoPurple" },
+  CLOSED = { "CLOSED", "OctoStateClosedBubble", "OctoRed" },
+  DRAFT = { "DRAFT", "OctoStateDraftBubble", "OctoGrey" },
+  QUEUED = { "QUEUED", "OctoStateQueuedBubble", "OctoYellow" },
+  READY = { "READY", "OctoStateApprovedBubble", "OctoGreen" },
+  NOT_READY = { "NOT READY", "OctoStatePendingBubble", "OctoYellow" },
+}
+
+---Badge shown for a PR in a stack listing: the PR state, or its merge
+---readiness (approved reviews and green checks) when it is open.
+---@param pr octo.StackPullRequest
+---@return { [1]: string, [2]: string, [3]: string } badge # label, bubble highlight, icon highlight
+local function stack_badge(pr)
+  local state = utils.get_displayed_state(false, pr.state, nil, pr.isDraft, pr.isInMergeQueue)
+  local badge = stack_badge_map[state]
+  if not badge then
+    local rollup = pr.statusCheckRollup
+    local checks_ok = rollup == nil or rollup == vim.NIL or rollup.state == "SUCCESS"
+    local review_ok = utils.is_blank(pr.reviewDecision) or pr.reviewDecision == "APPROVED"
+    badge = (checks_ok and review_ok) and stack_badge_map.READY or stack_badge_map.NOT_READY
+  end
+  return badge
+end
+
+---Build virtual-text detail lines for the stack a PR belongs to.
+---Returns an empty list when the PR is not part of a stack.
+---@param stack_entry? octo.StackEntryHead
+---@return [string, string][][]
+function M.build_stack_details(stack_entry)
+  local lines = {} ---@type [string, string][][]
+  if stack_entry == nil or stack_entry == vim.NIL or utils.is_blank(stack_entry.stack) then
+    return lines
+  end
+  local stack = stack_entry.stack
+
+  table.insert(lines, {
+    { "Stack: ", "OctoDetailsLabel" },
+    { string.format("%d/%d", stack_entry.position, stack.size), "OctoDetailsValue" },
+    { " (into ", "OctoDetailsLabel" },
+    { stack.baseRefName, "OctoDetailsValue" },
+    { ")", "OctoDetailsLabel" },
+  })
+
+  local entries = vim.list_slice(stack.entries.nodes)
+  -- Top of the stack first, base branch last, matching the GitHub UI
+  table.sort(entries, function(a, b)
+    return a.position > b.position
+  end)
+
+  for _, entry in ipairs(entries) do
+    local is_current = entry.position == stack_entry.position
+    local line = { { is_current and "  ▶ " or "    ", "OctoDetailsValue" } }
+    local pr = entry.pullRequest
+    if pr == nil or pr == vim.NIL then
+      table.insert(line, { "(not accessible)", "OctoMissingDetails" })
+    else
+      local badge = stack_badge(pr)
+      local icon = utils.get_icon {
+        kind = "pull_request",
+        obj = pr --[[@as EntryObject]],
+      }
+      -- keep the state glyph but color it like the badge, matching the GitHub UI
+      table.insert(line, { icon[1], badge[3] })
+      table.insert(line, { "#" .. tostring(pr.number) .. " ", "OctoDetailsValue" })
+      if is_current then
+        table.insert(line, { pr.title, "OctoDetailsValue" })
+      else
+        table.insert(line, { pr.title })
+      end
+      vim.list_extend(line, bubbles.make_bubble(badge[1], badge[2], { left_margin_width = 1 }))
+    end
+    table.insert(lines, line)
+  end
+
+  return lines
+end
+
+-- How a check outcome is displayed: glyph, highlight and summary label
+local check_outcome_display = {
+  failed = { "✗ ", "OctoStateDismissed", "failed" },
+  running = { "● ", "OctoStatePending", "running" },
+  skipped = { "⊘ ", "OctoStateSkipped", "skipped" },
+  passed = { "✓ ", "OctoStateApproved", "passed" },
+}
+
+-- Listing order: the checks that need attention come first
+local check_outcome_order = { "failed", "running", "skipped", "passed" }
+
+local check_run_conclusion_outcomes = {
+  SUCCESS = "passed",
+  FAILURE = "failed",
+  TIMED_OUT = "failed",
+  ACTION_REQUIRED = "failed",
+  STARTUP_FAILURE = "failed",
+  SKIPPED = "skipped",
+  NEUTRAL = "skipped",
+  CANCELLED = "skipped",
+  STALE = "skipped",
+}
+
+local status_context_state_outcomes = {
+  SUCCESS = "passed",
+  PENDING = "running",
+  EXPECTED = "running",
+  FAILURE = "failed",
+  ERROR = "failed",
+}
+
+---Outcome bucket of a single check
+---@param context octo.StatusCheckRollupContext
+---@return "failed"|"running"|"skipped"|"passed"
+local function check_outcome(context)
+  if context.__typename == "CheckRun" then
+    if context.status ~= "COMPLETED" then
+      return "running"
+    end
+    return check_run_conclusion_outcomes[context.conclusion] or "skipped"
+  end
+  return status_context_state_outcomes[context.state] or "skipped"
+end
+
+---Display name of a single check: "workflow / job" when the workflow is known
+---@param context octo.StatusCheckRollupContext
+---@return string
+local function check_name(context)
+  if context.__typename ~= "CheckRun" then
+    return context.context or "check"
+  end
+  local name = context.name or "check"
+  local suite = context.checkSuite
+  if suite == nil or suite == vim.NIL then
+    return name
+  end
+  local run = suite.workflowRun
+  if run == nil or run == vim.NIL then
+    return name
+  end
+  local workflow = run.workflow
+  if workflow == nil or workflow == vim.NIL then
+    return name
+  end
+  local workflow_name = workflow.name
+  if workflow_name == nil or workflow_name == vim.NIL or workflow_name == "" then
+    return name
+  end
+  return workflow_name .. " / " .. name
+end
+
+---How long a finished check took, or nil while it is still running
+---@param context octo.StatusCheckRollupContext
+---@return string?
+local function check_duration(context)
+  local started, completed = context.startedAt, context.completedAt
+  if utils.is_blank(started) or utils.is_blank(completed) then
+    return nil
+  end
+  local ok, seconds = pcall(utils.seconds_between, started, completed)
+  if not ok or type(seconds) ~= "number" or seconds < 0 then
+    return nil
+  end
+  return utils.format_seconds(seconds)
+end
+
+---Build virtual-text detail lines for a PR's CI checks: a summary line with
+---the counts per outcome, followed by one line per check.
+---@param rollup? { state: octo.StatusState, contexts?: { nodes: octo.StatusCheckRollupContext[] } }
+---@return [string, string][][] lines
+---@return table<integer, octo.StatusCheckRollupContext> contexts # check per line offset, for cursor navigation
+function M.build_checks_details(rollup)
+  local lines = {} ---@type [string, string][][]
+  local contexts_by_offset = {} ---@type table<integer, octo.StatusCheckRollupContext>
+  if rollup == nil or rollup == vim.NIL then
+    return lines, contexts_by_offset
+  end
+
+  local contexts = {} ---@type octo.StatusCheckRollupContext[]
+  local rollup_contexts = rollup.contexts
+  if rollup_contexts ~= nil and rollup_contexts ~= vim.NIL and not utils.is_blank(rollup_contexts.nodes) then
+    contexts = rollup_contexts.nodes
+  end
+
+  -- No per-check data (older GHES, or a PR without checks): keep the rollup line
+  if #contexts == 0 then
+    local state = rollup.state
+    local state_info = utils.state_map[state]
+    if utils.is_blank(state_info) then
+      return lines, contexts_by_offset
+    end
+    table.insert(lines, {
+      { "Checks: ", "OctoDetailsLabel" },
+      { state_info.symbol .. state, state_info.hl },
+    })
+    return lines, contexts_by_offset
+  end
+
+  local buckets = { failed = {}, running = {}, skipped = {}, passed = {} } ---@type table<string, octo.StatusCheckRollupContext[]>
+  for _, context in ipairs(contexts) do
+    table.insert(buckets[check_outcome(context)], context)
+  end
+
+  local summary = { { "Checks: ", "OctoDetailsLabel" } } ---@type [string, string][]
+  local first = true
+  for _, outcome in ipairs(check_outcome_order) do
+    local count = #buckets[outcome]
+    if count > 0 then
+      local display = check_outcome_display[outcome]
+      if not first then
+        table.insert(summary, { " · ", "OctoDetailsLabel" })
+      end
+      table.insert(summary, { string.format("%d %s", count, display[3]), display[2] })
+      first = false
+    end
+  end
+  table.insert(lines, summary)
+
+  for _, outcome in ipairs(check_outcome_order) do
+    local display = check_outcome_display[outcome]
+    for _, context in ipairs(buckets[outcome]) do
+      ---@type [string, string][]
+      local line = {
+        { "    ", "OctoDetailsValue" },
+        { display[1], display[2] },
+        { check_name(context), "Normal" },
+      }
+      local duration = check_duration(context)
+      if duration then
+        table.insert(line, { "  " .. duration, "OctoDetailsLabel" })
+      end
+      table.insert(lines, line)
+      contexts_by_offset[#lines] = context
+    end
+  end
+
+  return lines, contexts_by_offset
+end
+
 --- Write issue or PR details virtual text in buffer
 ---@param bufnr integer
 ---@param issue octo.PullRequest|octo.Issue
@@ -724,6 +962,9 @@ function M.write_details(bufnr, issue, update, include_status)
 
   local is_issue = detect_issue_from_url(issue.url)
   local details = {} ---@type [string, string][][]
+  local check_by_index = {} ---@type table<integer, octo.StatusCheckRollupContext> detail index -> check
+  local checks_summary_index ---@type integer? detail index of the "Checks:" summary
+  local checks_last_index ---@type integer? detail index of the last check
 
   if include_status then
     add_status_detail(details, is_issue, issue.state, issue.stateReason, issue.isDraft, issue.isInMergeQueue)
@@ -973,6 +1214,11 @@ function M.write_details(bufnr, issue, update, include_status)
     }
     table.insert(details, branches_vt)
 
+    -- stacked PRs
+    for _, stack_line in ipairs(M.build_stack_details(issue.stackEntry)) do
+      table.insert(details, stack_line)
+    end
+
     -- review decision
     if issue.reviewDecision and issue.reviewDecision ~= vim.NIL then
       local decision_vt = {
@@ -983,16 +1229,15 @@ function M.write_details(bufnr, issue, update, include_status)
     end
 
     -- checks
-    if issue.statusCheckRollup and issue.statusCheckRollup ~= vim.NIL then
-      local state = issue.statusCheckRollup.state
-      local state_info = utils.state_map[state]
-      ---@type string
-      local message = state_info.symbol .. state
-      local checks_vt = {
-        { "Checks: ", "OctoDetailsLabel" },
-        { message, state_info.hl },
-      }
-      table.insert(details, checks_vt)
+    local checks_lines, checks_contexts = M.build_checks_details(issue.statusCheckRollup)
+    for offset, checks_line in ipairs(checks_lines) do
+      table.insert(details, checks_line)
+      check_by_index[#details] = checks_contexts[offset]
+      if offset == 1 then
+        checks_summary_index = #details
+      elseif checks_contexts[offset] then
+        checks_last_index = #details
+      end
     end
 
     -- merge state
@@ -1063,10 +1308,33 @@ function M.write_details(bufnr, issue, update, include_status)
     M.write_block(bufnr, empty_lines, line)
   end
 
-  -- write details as virtual text
-  for _, d in ipairs(details) do
+  -- write details as virtual text, remembering which lines hold CI checks
+  local check_by_line = {} ---@type table<integer, octo.StatusCheckRollupContext>
+  local checks_summary_line ---@type integer?
+  local checks_last_line ---@type integer?
+  for i, d in ipairs(details) do
     M.write_virtual_text(bufnr, constants.OCTO_DETAILS_VT_NS, line - 1, d)
+    if check_by_index[i] then
+      check_by_line[line] = check_by_index[i]
+    end
+    if i == checks_summary_index then
+      checks_summary_line = line
+    end
+    if i == checks_last_index then
+      checks_last_line = line
+    end
     line = line + 1
+  end
+  local buffer = octo_buffers[bufnr]
+  if buffer then
+    buffer.checkByLine = check_by_line
+    -- a long list of checks costs more screen than it is worth, so it is folded
+    -- away behind its summary until asked for, and stays as the reader left it
+    buffer.checksFold = nil
+    if config.values.ui.fold_checks and checks_summary_line and checks_last_line then
+      local is_open = vim.b[bufnr].octo_checks_unfolded == true
+      buffer.checksFold = folds.create_checks(bufnr, checks_summary_line, checks_last_line, is_open)
+    end
   end
 end
 

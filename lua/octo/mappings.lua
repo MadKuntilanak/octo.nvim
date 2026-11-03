@@ -310,6 +310,9 @@ return {
   merge_pr = function()
     require("octo.commands").merge_pr "merge"
   end,
+  merge_pr_stack = function()
+    require("octo.commands").merge_pr "stack"
+  end,
   merge_pr_queue = function()
     require("octo.commands").merge_pr("merge", "queue")
   end,
@@ -364,6 +367,18 @@ return {
   goto_file = function()
     require("octo.navigation").go_to_file()
   end,
+  stack_up = function()
+    require("octo.navigation").go_to_stack_neighbor(1)
+  end,
+  stack_down = function()
+    require("octo.navigation").go_to_stack_neighbor(-1)
+  end,
+  goto_check = function()
+    require("octo.navigation").go_to_check()
+  end,
+  toggle_checks = function()
+    require("octo.navigation").toggle_checks()
+  end,
   next_comment = function()
     require("octo.navigation").next_comment()
   end,
@@ -408,6 +423,9 @@ return {
   end,
   react_confused = function()
     require("octo.commands").reaction_action "confused"
+  end,
+  review = function()
+    reviews.start_or_resume_review()
   end,
   review_start = function()
     reviews.start_review()

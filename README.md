@@ -293,6 +293,7 @@ require"octo".setup {
     use_signcolumn = false, -- show "modified" marks on the sign column
     use_statuscolumn = true, -- show "modified" marks on the status column
     use_foldtext = true,
+    fold_checks = true, -- fold the CI checks list in the PR details, closed by default
   },
   issues = {
     order_by = { -- criteria to sort results of `Octo issue list`
@@ -423,6 +424,7 @@ require"octo".setup {
       merge_pr = { lhs = "<localleader>pm", desc = "merge commit PR" },
       squash_and_merge_pr = { lhs = "<localleader>psm", desc = "squash and merge PR" },
       rebase_and_merge_pr = { lhs = "<localleader>prm", desc = "rebase and merge PR" },
+      merge_pr_stack = { lhs = "<localleader>pk", desc = "merge PR stack (this PR and all below it)" },
       merge_pr_queue = {
         lhs = "<localleader>pq",
         desc = "merge commit PR and add to merge queue (Merge queue must be enabled in the repo)",
@@ -449,6 +451,10 @@ require"octo".setup {
       copy_url = { lhs = "<C-y>", desc = "copy url to system clipboard" },
       copy_sha = { lhs = "<C-e>", desc = "copy commit SHA to system clipboard" },
       goto_file = { lhs = "gf", desc = "go to file" },
+      stack_up = { lhs = "]s", desc = "open the next PR up the stack" },
+      stack_down = { lhs = "[s", desc = "open the next PR down the stack" },
+      goto_check = { lhs = "<localleader>gc", desc = "open the CI check under the cursor" },
+      toggle_checks = { lhs = "<localleader>tc", desc = "fold or unfold the CI checks list" },
       add_assignee = { lhs = "<localleader>aa", desc = "add assignee" },
       remove_assignee = { lhs = "<localleader>ad", desc = "remove assignee" },
       create_label = { lhs = "<localleader>lc", desc = "create label" },
@@ -470,6 +476,7 @@ require"octo".setup {
       react_rocket = { lhs = "<localleader>rr", desc = "add/remove 🚀 reaction" },
       react_laugh = { lhs = "<localleader>rl", desc = "add/remove 😄 reaction" },
       react_confused = { lhs = "<localleader>rc", desc = "add/remove 😕 reaction" },
+      review = { lhs = "<localleader>ve", desc = "start or resume a review for the current PR" },
       review_start = { lhs = "<localleader>vs", desc = "start a review for the current PR" },
       review_resume = { lhs = "<localleader>vr", desc = "resume a pending review for the current PR" },
       resolve_thread = { lhs = "<localleader>rt", desc = "resolve PR thread" },
@@ -865,6 +872,8 @@ Also, you can use [`cmp-emoji`](https://github.com/hrsh7th/cmp-emoji) or [`blink
 | _OctoStateClosedFloat_            | OctoRedFloat       |
 | _OctoStateMergedFloat_            | OctoPurpleFloat    |
 | _OctoStateDraftFloat_             | OctoGreyFloat      |
+| _OctoReviewDiffDelete_            | DiffDelete         |
+| _OctoReviewDiffAdd_               | DiffAdd            |
 | _OctoReviewDiffDeleteText_        | OctoRed            |
 | _OctoReviewDiffAddText_           | OctoGreen          |
 

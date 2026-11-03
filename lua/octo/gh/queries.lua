@@ -104,10 +104,50 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   ---@class octo.PullRequestTimelineItemsConnection : octo.fragments.PullRequestTimelineItemsConnection
   ---@field pageInfo octo.PageInfo
 
+  ---@class octo.StackPullRequest
+  ---@field number integer
+  ---@field title string
+  ---@field url string
+  ---@field state octo.PullRequestState
+  ---@field isDraft boolean
+  ---@field isInMergeQueue boolean
+  ---@field reviewDecision? string
+  ---@field statusCheckRollup? { state: octo.StatusState }
+
+  ---@class octo.PullRequestStackEntry
+  ---@field position integer 1 is closest to the base branch
+  ---@field pullRequest? octo.StackPullRequest null when not accessible
+
+  ---@class octo.PullRequestStack
+  ---@field id string
+  ---@field number integer
+  ---@field size integer
+  ---@field baseRefName string
+  ---@field entries { nodes: octo.PullRequestStackEntry[] }
+
+  ---@class octo.StackEntryHead
+  ---@field position integer
+  ---@field stack octo.PullRequestStack
+
+  ---@class octo.StatusCheckRollupContext
+  ---@field __typename "CheckRun"|"StatusContext"
+  ---@field name? string CheckRun: job name
+  ---@field status? string CheckRun: QUEUED|IN_PROGRESS|COMPLETED|...
+  ---@field conclusion? string CheckRun: SUCCESS|FAILURE|SKIPPED|...
+  ---@field startedAt? string
+  ---@field completedAt? string
+  ---@field detailsUrl? string
+  ---@field checkSuite? { workflowRun?: { workflow: { name: string } } }
+  ---@field context? string StatusContext: check name
+  ---@field state? octo.StatusState StatusContext state
+  ---@field description? string
+  ---@field targetUrl? string
+
   ---@class octo.PullRequest : octo.ReactionGroupsFragment
   ---@field id string
   ---@field isDraft boolean
   ---@field isInMergeQueue? boolean
+  ---@field stackEntry? octo.StackEntryHead github.com only, null when not part of a stack
   ---@field number integer
   ---@field state octo.PullRequestState
   ---@field title string
@@ -146,7 +186,7 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   ---@field labels octo.fragments.LabelConnection
   ---@field assignees octo.fragments.AssigneeConnection
   ---@field reviewRequests { totalCount: integer, nodes: { requestedReviewer: { name: string }|{ login: string }|{ login: string, isViewer: boolean } }[] }
-  ---@field statusCheckRollup { state: octo.StatusState }
+  ---@field statusCheckRollup { state: octo.StatusState, contexts?: { nodes: octo.StatusCheckRollupContext[] } }
   ---@field mergeStateStatus octo.MergeStateStatus
   ---@field mergeable octo.MergeableState
   ---@field autoMergeRequest { enabledBy: { login: string }, mergeMethod: string }
@@ -159,6 +199,7 @@ query($endCursor: String) {
       id
       isDraft
       isInMergeQueue
+      {stackEntry}
       number
       state
       title
@@ -269,6 +310,32 @@ query($endCursor: String) {
       }
       statusCheckRollup {
         state
+        contexts(first: 100) {
+          nodes {
+            __typename
+            ... on CheckRun {
+              name
+              status
+              conclusion
+              startedAt
+              completedAt
+              detailsUrl
+              checkSuite {
+                workflowRun {
+                  workflow {
+                    name
+                  }
+                }
+              }
+            }
+            ... on StatusContext {
+              context
+              state
+              description
+              targetUrl
+            }
+          }
+        }
       }
       mergeStateStatus
       mergeable
@@ -561,6 +628,7 @@ query(
         headRefName
         isDraft
         isInMergeQueue
+        {stackSummary}
         state
       }
       pageInfo {
@@ -601,6 +669,7 @@ query($prompt: String!, $type: SearchType = ISSUE, $last: Int = 100) {
         state
         isDraft
         isInMergeQueue
+        {stackSummary}
         repository { nameWithOwner }
       }
       ... on Discussion {
@@ -1564,17 +1633,59 @@ query($id: ID!) {
 }
 ]]
 
+  -- Stacked PRs: github.com only, the stack fields do not exist on GHES
+  local stack_entry_field = [[stackEntry {
+        position
+        stack {
+          id
+          number
+          size
+          baseRefName
+          entries(first: 50) {
+            nodes {
+              position
+              pullRequest {
+                number
+                title
+                url
+                state
+                isDraft
+                isInMergeQueue
+                reviewDecision
+                statusCheckRollup {
+                  state
+                }
+              }
+            }
+          }
+        }
+      }]]
+
+  -- Lightweight stack summary for list views: position and stack size only
+  local stack_summary_field = [[stackEntry {
+          position
+          stack {
+            size
+          }
+        }]]
+
   -- Inject isInMergeQueue for github.com only (may not exist on GHES)
   if config.values.github_hostname == "" then
     local field = "isInMergeQueue"
     M.pull_requests = M.pull_requests:gsub("{isInMergeQueue}", field)
     M.search = M.search:gsub("{isInMergeQueue}", field)
     M.pull_request = M.pull_request:gsub("{isInMergeQueue}", field)
+    M.pull_request = M.pull_request:gsub("{stackEntry}", stack_entry_field)
+    M.pull_requests = M.pull_requests:gsub("{stackSummary}", stack_summary_field)
+    M.search = M.search:gsub("{stackSummary}", stack_summary_field)
   else
     -- Remove the placeholder lines for GHES (GraphQL ignores blank lines)
     M.pull_requests = M.pull_requests:gsub("%s*{isInMergeQueue}\n", "")
     M.search = M.search:gsub("%s*{isInMergeQueue}\n", "")
     M.pull_request = M.pull_request:gsub("%s*{isInMergeQueue}\n", "")
+    M.pull_request = M.pull_request:gsub("%s*{stackEntry}\n", "")
+    M.pull_requests = M.pull_requests:gsub("%s*{stackSummary}\n", "")
+    M.search = M.search:gsub("%s*{stackSummary}\n", "")
   end
 end
 
